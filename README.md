@@ -1,5 +1,5 @@
 Recommendation Model Backend
-Backend for a PIN AI-inspired PoC, generating task recommendations and executing web-based actions.
+Backend for a AI-inspired PoC, generating task recommendations and executing web-based actions.
 Setup
 
 Install Python 3.9.
