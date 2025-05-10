@@ -1,4 +1,7 @@
-# Phase I Documentation
+
+Recommendation Model Backend
+Backend for a AI-inspired PoC, generating task recommendations and executing web-based actions.
+Setup
 
 This document describes the files in the project as of Phase I.
 
