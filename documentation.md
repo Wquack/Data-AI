@@ -1,7 +1,4 @@
-
-Recommendation Model Backend
-Backend for a AI-inspired PoC, generating task recommendations and executing web-based actions.
-Setup
+# Phase I Documentation
 
 This document describes the files in the project as of Phase I.
 
