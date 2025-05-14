@@ -1,45 +1,62 @@
+
 Recommendation Model Backend
-Backend for a PIN AI-inspired PoC, generating task recommendations and executing web-based actions.
+Backend for a AI-inspired PoC, generating task recommendations and executing web-based actions.
 Setup
 
-Install Python 3.9.
-Create virtual environment:python -m venv venv
-.\venv\Scripts\activate
+This document describes the files in the project as of Phase I.
 
+## .gitignore
 
-Install dependencies:pip install flask==2.3.3 flask-cors==5.0.0 transformers==4.35.2 torch==2.3.0 pycryptodome==3.20.0 requests==2.31.0
+This file specifies intentionally untracked files that Git should ignore. It prevents sensitive information and build artifacts from being committed to the repository.
 
+## README.md
 
-Run:python recommendation_model.py
+This file provides a high-level overview of the project, including its purpose, usage instructions, and development information.
 
+## requirements.txt
 
+This file lists the Python packages required to run the project. It is used to install the dependencies using `pip install -r requirements.txt`.
 
-API Endpoints
+## token.json
 
-POST /recommend
-Input: {"event_summary": "string"}
-Output: {"recommendation": "string"}
-Example: {"event_summary": "Team meeting at 2 PM"} → {"recommendation": "Prepare slides"}
+This file stores the user's authentication token for the Google Calendar API. It is generated after the user authorizes the application to access their calendar.
 
+## app/
 
-POST /execute_task
-Input: {"recommendation": "string", "event_summary": "string"}
-Output: {"action": "string", "details": "object"}
-Example: {"recommendation": "Prepare slides", "event_summary": "Team meeting at 2 PM"} → {"action": "Scheduled meeting", "details": {...}}
+This directory contains the main application code.
 
+### app/__init__.py
 
+This file initializes the `app` package and creates the Flask application instance.
 
-Mock APIs
+### app/calendar_api.py
 
-Google Calendar: createEvent (Prepare slides)
-Notion: createPage (Review notes)
-Gmail: users.messages.send (Bring documents)
-Slack: chat.postMessage (Plan schedule)
+This file contains functions for interacting with the Google Calendar API, such as creating and listing calendar events.
 
-Notes
+### app/encryption.py
 
-Uses httpbin.org/post for mock API responses.
-Phase 2: Implement real APIs (Google, Notion, Zoom, Slack).
-Privacy: Inputs encrypted, mock APIs send minimal data.
+This file provides functions for encrypting and decrypting sensitive data, such as the user's Google Calendar API token.
 
+<<<<<<< HEAD
 hello
+=======
+### app/main.py
+
+This file contains the main application logic, including the Flask routes and the task recommendation engine.
+
+### app/mock_apis.py
+
+This file contains mock implementations of external APIs, such as Notion, Gmail, and Slack. These are used for testing purposes.
+
+### app/notion_api.py
+
+This file contains functions for interacting with the Notion API, such as creating and listing pages.
+
+### app/powerpoint_api.py
+
+This file contains functions for creating PowerPoint slides from event summaries.
+
+### app/recommendation.py
+
+This file contains the logic for recommending tasks based on the user's calendar events and Notion pages.
+>>>>>>> 8ff9a191de3187a01ddb78b16dbdaddbd4ca2483
