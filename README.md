@@ -42,3 +42,4 @@ Uses httpbin.org/post for mock API responses.
 Phase 2: Implement real APIs (Google, Notion, Zoom, Slack).
 Privacy: Inputs encrypted, mock APIs send minimal data.
 
+hello
