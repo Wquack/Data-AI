@@ -2,4 +2,8 @@ client_secret.json
 venv
 token.json
 response.json
+token.json
+*.pem
+*.key
+*.env
 
