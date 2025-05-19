@@ -2,11 +2,14 @@
  # Replace with your Notion API token
 from notion_client import Client
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 NOTION_TOKEN = "ntn_m5661501363RL0yPcwtcZL8NiyvuIWWnRgnWwNddQUx4qT"  # Replace with your Notion API token
 notion = Client(auth=NOTION_TOKEN)
+
+DEFAULT_PARENT_PAGE_ID = "1ee15173a7b3802cb116cd53d86d1973?pvs=12"
 
 def list_notion_pages():
     """List all pages accessible to the integration."""
@@ -30,36 +33,12 @@ def create_notion_page(event_summary, parent_page_id=None):
     """Generate a new page in Notion under the specified parent page."""
     try:
         if not parent_page_id:
-            # Fallback: Search for a default page or create one
-            search_response = notion.search(
-                query="DATA_AI Notes",
-                filter={"value": "page", "property": "object"}
-            )
-            pages = search_response.get("results", [])
-            for page in pages:
-                if page["properties"]["title"]["title"][0]["plain_text"] == "DATA_AI Notes":
-                    parent_page_id = page["id"]
-                    logger.info(f"Found default parent page 'DATA_AI Notes' with ID: {parent_page_id}")
-                    break
-            if not parent_page_id:
-                create_response = notion.pages.create(
-                    parent={"type": "workspace"},
-                    properties={
-                        "title": {
-                            "type": "title",
-                            "title": [
-                                {
-                                    "type": "text",
-                                    "text": {
-                                        "content": "DATA_AI Notes"
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                )
-                parent_page_id = create_response["id"]
-                logger.info(f"Created default parent page 'DATA_AI Notes' with ID: {parent_page_id}")
+            parent_page_id = DEFAULT_PARENT_PAGE_ID
+            logger.info(f"Using default parent page ID: {parent_page_id}")
+
+        # Append a timestamp to the page title to ensure uniqueness
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        unique_title = f"Notes for {event_summary} - {timestamp}"
 
         response = notion.pages.create(
             parent={"page_id": parent_page_id},
@@ -70,7 +49,7 @@ def create_notion_page(event_summary, parent_page_id=None):
                         {
                             "type": "text",
                             "text": {
-                                "content": f"Notes for {event_summary}"
+                                "content": unique_title
                             }
                         }
                     ]

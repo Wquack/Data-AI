@@ -3,15 +3,15 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from flask import request, jsonify, redirect, url_for, send_from_directory
 from . import create_app
-from .recommendation import get_recommendation, process_user_message
-from .calendar_api import create_calendar_event, get_auth_url, handle_oauth_callback, list_calendar_events
+from .recommendation import get_recommendation, process_user_message, chat_with_distilbert
+from .calendar_api import create_calendar_event, get_auth_url, handle_oauth_callback, list_calendar_events, get_calendar_service
 from .encryption import encrypt_data
 from .mock_apis import mock_gmail_send, mock_slack_post
 from .notion_api import create_notion_page, list_notion_pages
 from .powerpoint_api import create_powerpoint_slides
 import logging
-
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+from datetime import date, datetime, timedelta
+from urllib.parse import urlencode
 
 app = create_app()
 
@@ -49,9 +49,28 @@ def chat_endpoint():
 
         logger.info(f"Received user message: {message}")
         result = process_user_message(message)
+        logger.info(f"Chat endpoint response: {result}")
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/chat_with_distilbert', methods=['POST'])
+def chat_with_distilbert_endpoint():
+    """Endpoint to directly interact with DistilBERT for sentiment analysis."""
+    try:
+        data = request.json
+        message = data.get('message', '')
+        if not isinstance(message, str) or not message.strip():
+            logger.warning("Invalid message")
+            return jsonify({'error': 'Message must be a non-empty string'}), 400
+
+        logger.info(f"Received user message for DistilBERT: {message}")
+        result = chat_with_distilbert(message)
+        logger.info(f"DistilBERT response: {result}")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error in chat_with_distilbert endpoint: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/list_notion_pages', methods=['GET'])
@@ -73,7 +92,14 @@ def list_calendar_events_endpoint():
             except Exception as e:
                 logger.error(f"Failed to generate auth URL: {e}")
                 return jsonify({'error': f"Failed to initiate authentication: {str(e)}"}), 500
-        events = list_calendar_events()
+        # Get the date range parameters from the query string
+        start_date = request.args.get('start_date', None)
+        end_date = request.args.get('end_date', None)
+        # Backward compatibility: if only 'date' is provided, use it as start_date
+        if not start_date and request.args.get('date', None):
+            start_date = request.args.get('date')
+            end_date = start_date
+        events = list_calendar_events(start_date, end_date)
         return jsonify({'events': events})
     except Exception as e:
         logger.error(f"Error listing calendar events: {e}")
@@ -83,16 +109,16 @@ def list_calendar_events_endpoint():
 def execute_task_endpoint():
     try:
         data = request.json
-        recommendation = data.get('recommendation', '')
+        action = data.get('action', '')
         event_summary = data.get('event_summary', '')
         parent_page_id = data.get('parent_page_id', None)
-        if not isinstance(recommendation, str) or not recommendation.strip() or not isinstance(event_summary, str) or not event_summary.strip():
-            logger.warning("Invalid recommendation or event summary")
-            return jsonify({'error': 'Recommendation and event summary must be non-empty strings'}), 400
+        if not isinstance(action, str) or not action.strip() or not isinstance(event_summary, str) or not event_summary.strip():
+            logger.warning("Invalid action or event summary")
+            return jsonify({'error': 'Action and event summary must be non-empty strings'}), 400
 
-        logger.info(f"Executing task for recommendation: {recommendation}, event: {event_summary}")
+        logger.info(f"Executing task for action: {action}, event: {event_summary}")
         
-        if recommendation == "Prepare slides":
+        if action == "Prepare slides":
             if not os.path.exists('token.json'):
                 try:
                     auth_url = get_auth_url()
@@ -104,19 +130,74 @@ def execute_task_endpoint():
             calendar_result = create_calendar_event(event_summary)
             # Create PowerPoint slides
             ppt_result = create_powerpoint_slides(event_summary)
+            # Create a Notion page to link the slides
+            notion_result = create_notion_page(f"Slides for {event_summary}", parent_page_id)
+            notion_result["details"]["slides_path"] = ppt_result["details"]["file_path"]
+            # Update Calendar event with PowerPoint file path and Notion page URL
+            service = get_calendar_service()
+            event_id = calendar_result["details"]["event_id"]
+            event = service.events().get(calendarId='primary', eventId=event_id).execute()
+            event['description'] = (event.get('description', '') + f"\n\nPowerPoint Slides: {ppt_result['details']['file_path']}\nNotion Page: {notion_result['details']['url']}")
+            service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
+            logger.info(f"Updated Calendar event {event_id} with PowerPoint file path and Notion page URL")
             # Combine results
             result = {
                 "action": "Completed multiple tasks",
                 "details": {
                     "calendar": calendar_result["details"],
-                    "powerpoint": ppt_result["details"]
+                    "powerpoint": ppt_result["details"],
+                    "notion": notion_result["details"]
                 }
             }
-        elif recommendation == "Review notes":
-            result = create_notion_page(event_summary, parent_page_id)
-        elif recommendation == "Bring documents":
+        elif action == "Write important notes in Notion":
+            # Create Notion page
+            notion_result = create_notion_page(event_summary, parent_page_id)
+            # Redirect to the Notion page URL
+            return jsonify({
+                "action": "Redirect to Notion",
+                "redirect_url": notion_result["details"]["url"]
+            })
+        elif action == "Write up an email for the meeting to a colleague":
+            # Redirect to Gmail compose with pre-filled details
+            email_params = {
+                "to": "",  # Let the user fill in the recipient
+                "subject": f"Meeting: {event_summary}",
+                "body": f"Hi,\n\nI wanted to discuss our meeting scheduled for {event_summary}. Here are some details...\n\nBest,\n[Your Name]"
+            }
+            email_url = f"https://mail.google.com/mail/?view=cm&fs=1&{urlencode(email_params)}"
+            return jsonify({
+                "action": "Redirect to Gmail",
+                "redirect_url": email_url
+            })
+        elif action == "Send an email to discuss concerns":
+            # Redirect to Gmail compose with pre-filled details
+            email_params = {
+                "to": "",  # Let the user fill in the recipient
+                "subject": f"Concerns about {event_summary}",
+                "body": f"Hi,\n\nI wanted to discuss some concerns I have about {event_summary}. Could we set up a time to talk?\n\nBest,\n[Your Name]"
+            }
+            email_url = f"https://mail.google.com/mail/?view=cm&fs=1&{urlencode(email_params)}"
+            return jsonify({
+                "action": "Redirect to Gmail",
+                "redirect_url": email_url
+            })
+        elif action == "Schedule a follow-up meeting":
+            if not os.path.exists('token.json'):
+                try:
+                    auth_url = get_auth_url()
+                    return jsonify({'action': 'Requires authentication', 'auth_url': auth_url}), 401
+                except Exception as e:
+                    logger.error(f"Failed to generate auth URL: {e}")
+                    return jsonify({'error': f"Failed to initiate authentication: {str(e)}"}), 500
+            # Create calendar event
+            calendar_result = create_calendar_event(event_summary)
+            return jsonify({
+                "action": "Scheduled meeting",
+                "details": calendar_result["details"]
+            })
+        elif action == "Bring documents":
             result = mock_gmail_send(event_summary)
-        elif recommendation == "Plan schedule":
+        elif action == "Plan schedule":
             result = mock_slack_post(event_summary)
         else:
             result = {"action": "No action taken", "details": {}}

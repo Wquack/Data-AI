@@ -7,6 +7,9 @@ import logging
 from datetime import datetime, timedelta, date
 from googleapiclient.errors import HttpError
 
+
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
 logger = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
@@ -47,7 +50,7 @@ def get_auth_url():
         if not os.path.exists(CREDENTIALS_FILE):
             raise FileNotFoundError(f"{CREDENTIALS_FILE} not found")
         flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-        flow.redirect_uri = 'http://localhost:5000/oauth2callback'
+        flow.redirect_uri = 'http://localhost:5000/oauth2callback'  # Updated for local development
         auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
         logger.info(f"Generated auth URL: {auth_url}")
         return auth_url
@@ -58,10 +61,8 @@ def get_auth_url():
 def handle_oauth_callback(authorization_response):
     """Handle OAuth callback."""
     try:
-        if authorization_response.startswith('http://'):
-            authorization_response = 'https://' + authorization_response[len('http://'):]
         flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-        flow.redirect_uri = 'http://localhost:5000/oauth2callback'
+        flow.redirect_uri = 'http://localhost:5000/oauth2callback'  # Updated for local development
         logger.info(f"Handling OAuth callback with response: {authorization_response}")
         flow.fetch_token(authorization_response=authorization_response)
         creds = flow.credentials
@@ -90,14 +91,22 @@ def create_calendar_event(event_summary):
         logger.error(f"Error creating calendar event: {e}")
         raise
 
-def list_calendar_events():
-    """List today's events from Google Calendar."""
+def list_calendar_events(start_date=None, end_date=None):
+    """List events within a date range from Google Calendar."""
     try:
         service = get_calendar_service()
-        # Define the time range for today
-        today = date.today()
-        time_min = datetime.combine(today, datetime.min.time()).isoformat() + 'Z'
-        time_max = datetime.combine(today, datetime.max.time()).isoformat() + 'Z'
+        # Define the time range
+        if start_date:
+            start = datetime.strptime(start_date, '%Y-%m-%d').date()
+        else:
+            start = date.today()
+        if end_date:
+            end = datetime.strptime(end_date, '%Y-%m-%d').date()
+        else:
+            end = start + timedelta(days=30)  # Default to 30 days from start date
+
+        time_min = datetime.combine(start, datetime.min.time()).isoformat() + 'Z'
+        time_max = datetime.combine(end, datetime.max.time()).isoformat() + 'Z'
 
         events_result = service.events().list(
             calendarId='primary',
@@ -117,7 +126,7 @@ def list_calendar_events():
                 "start": start,
                 "link": event.get('htmlLink', '')
             })
-        logger.info(f"Retrieved {len(event_list)} events for today")
+        logger.info(f"Retrieved {len(event_list)} events from {start} to {end}")
         return event_list
     except HttpError as e:
         logger.error(f"Error fetching calendar events: {e}")
