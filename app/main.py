@@ -4,14 +4,21 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from flask import request, jsonify, redirect, url_for, send_from_directory
 from . import create_app
 from .recommendation import get_recommendation, process_user_message, chat_with_distilbert
-from .calendar_api import create_calendar_event, get_auth_url, handle_oauth_callback, list_calendar_events, get_calendar_service, get_drive_service, upload_to_drive, send_gmail
+from .calendar_api import create_calendar_event, get_auth_url, handle_oauth_callback, list_calendar_events, get_calendar_service, get_drive_service, upload_to_drive, send_gmail, create_calendar_event_with_zoom
 from .encryption import encrypt_data
 from .slack_oauth import get_slack_auth_url, handle_slack_callback, post_to_slack
+from .zoom_oauth import get_zoom_auth_url, handle_zoom_callback
 from .notion_api import create_notion_page, list_notion_pages
 from .powerpoint_api import create_powerpoint_slides
 import logging
+from utils.token_store import load_tokens
+import requests
 from datetime import date, datetime, timedelta
 from urllib.parse import urlencode
+from utils.token_store import load_tokens
+from .zoom_oauth import refresh_zoom_token  
+import requests
+from datetime import datetime, timedelta
 
 app = create_app()
 
@@ -72,6 +79,75 @@ def chat_with_distilbert_endpoint():
         logger.error(f"Error in chat_with_distilbert endpoint: {e}")
         return jsonify({'error': str(e)}), 500
 
+# ✅ make sure this import exists
+
+@app.route('/create_zoom_meeting', methods=['POST'])
+def create_zoom_meeting():
+    try:
+        data = request.json
+        topic = data.get('topic', 'AI Meeting')
+        start_time = data.get('start_time')  # ISO 8601 format: "2025-05-21T15:00:00"
+        duration = data.get('duration', 30)  # in minutes
+
+        user_id = request.headers.get("X-User-ID")
+        if not user_id:
+            return jsonify({"error": "Missing X-User-ID"}), 400
+
+        tokens = load_tokens(user_id)
+        access_token = tokens.get("zoom", {}).get("access_token")
+        if not access_token:
+            return jsonify({"error": "Zoom token not found for this user"}), 401
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+
+        meeting_data = {
+            "topic": topic,
+            "type": 2,  # Scheduled meeting
+            "start_time": start_time,
+            "duration": duration,
+            "timezone": "Asia/Kolkata",
+            "settings": {
+                "join_before_host": True,
+                "waiting_room": False
+            }
+        }
+
+        # First attempt to create the meeting
+        response = requests.post(
+            "https://api.zoom.us/v2/users/me/meetings",
+            headers=headers,
+            json=meeting_data
+        )
+
+        # 🔁 If token is expired, refresh and retry once
+        if response.status_code == 401 and response.json().get("code") == 124:
+            access_token = refresh_zoom_token(user_id)
+            headers["Authorization"] = f"Bearer {access_token}"
+            response = requests.post(
+                "https://api.zoom.us/v2/users/me/meetings",
+                headers=headers,
+                json=meeting_data
+            )
+
+        if response.status_code != 201:
+            return jsonify({"error": "Zoom API error", "details": response.json()}), 500
+
+        result = response.json()
+        return jsonify({
+            "message": "Meeting created",
+            "zoom_link": result["join_url"],
+            "meeting_id": result["id"],
+            "start_time": result["start_time"]
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
 @app.route('/list_notion_pages', methods=['GET'])
 def list_notion_pages_endpoint():
     try:
@@ -122,25 +198,85 @@ def execute_task_endpoint():
     try:
         data = request.json
         action = data.get('action', '')
-        event_summary = data.get('event_summary', '')
+        event_summary = data.get('event_summary', '') or data.get('topic', 'AI Meeting')
         parent_page_id = data.get('parent_page_id')
         recipient = data.get('recipient', '')
         slack_channel = data.get('slack_channel')
+        start_time = data.get('start_time')  # "2025-05-21T15:00:00"
+        duration = data.get('duration', 30)
+        user_id = request.headers.get("X-User-ID")
 
+        if not user_id:
+            return jsonify({"error": "Missing X-User-ID"}), 400
         if not action.strip() or not event_summary.strip():
-            logger.warning("Invalid action or event summary")
             return jsonify({'error': 'Action and event summary must be non-empty strings'}), 400
 
-        logger.info(f"Executing task for action: {action}, event: {event_summary}")
-        
-        if action == "Prepare slides":
+        logger.info(f"Executing action: {action} for user: {user_id}")
+
+        # === 🔹 Setup full Zoom meeting + Calendar ===
+        if action == "Setup full Zoom meeting":
+            # Zoom meeting
+            tokens = load_tokens(user_id)
+            access_token = tokens.get("zoom", {}).get("access_token")
+            if not access_token:
+                return jsonify({"error": "Zoom token not found"}), 401
+
+            meeting_payload = {
+                "topic": event_summary,
+                "type": 2,
+                "start_time": start_time,
+                "duration": duration,
+                "timezone": "Asia/Kolkata",
+                "settings": {
+                    "join_before_host": True,
+                    "waiting_room": False
+                }
+            }
+
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+
+            zoom_response = requests.post(
+                "https://api.zoom.us/v2/users/me/meetings",
+                headers=headers,
+                json=meeting_payload
+            )
+
+            if zoom_response.status_code == 401 and zoom_response.json().get("code") == 124:
+                access_token = refresh_zoom_token(user_id)
+                headers["Authorization"] = f"Bearer {access_token}"
+                zoom_response = requests.post(
+                    "https://api.zoom.us/v2/users/me/meetings",
+                    headers=headers,
+                    json=meeting_payload
+                )
+
+            if zoom_response.status_code != 201:
+                return jsonify({"error": "Zoom API error", "details": zoom_response.json()}), 500
+
+            zoom_data = zoom_response.json()
+            zoom_link = zoom_data["join_url"]
+
+            calendar_result = create_calendar_event_with_zoom(
+                topic=event_summary,
+                start_time=start_time,
+                duration=duration,
+                zoom_link=zoom_link,
+                user_id=user_id
+            )
+
+            return jsonify({
+                "message": "Zoom + Calendar setup complete",
+                "zoom_link": zoom_link,
+                "calendar_event": calendar_result
+            })
+
+        # === 📊 Prepare slides workflow ===
+        elif action == "Prepare slides":
             if not os.path.exists('token.json'):
-                try:
-                    auth_url = get_auth_url()
-                    return jsonify({'action': 'Requires authentication', 'auth_url': auth_url}), 401
-                except Exception as e:
-                    logger.error(f"Failed to generate auth URL: {e}")
-                    return jsonify({'error': f"Failed to initiate authentication: {str(e)}"}), 500
+                return jsonify({'action': 'Requires authentication', 'auth_url': get_auth_url()}), 401
 
             calendar_result = create_calendar_event(event_summary)
             ppt_result = create_powerpoint_slides(event_summary)
@@ -151,19 +287,20 @@ def execute_task_endpoint():
             service = get_calendar_service()
             event_id = calendar_result["details"]["event_id"]
             event = service.events().get(calendarId='primary', eventId=event_id).execute()
-            event['description'] = (event.get('description', '') + f"\n\nGoogle Drive Link: {drive_link}\nNotion Page: {notion_result['details']['url']}")
+            event['description'] = (event.get('description', '') +
+                                    f"\n\nGoogle Drive Link: {drive_link}\nNotion Page: {notion_result['details']['url']}")
             service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
-            logger.info(f"Updated Calendar event {event_id} with Google Drive link and Notion page URL")
 
-            result = {
+            return jsonify({
                 "action": "Completed multiple tasks",
                 "details": {
                     "calendar": calendar_result["details"],
                     "drive_link": drive_link,
                     "notion": notion_result["details"]
                 }
-            }
+            })
 
+        # === 📒 Notion note creation ===
         elif action == "Write important notes in Notion":
             notion_result = create_notion_page(event_summary, parent_page_id)
             return jsonify({
@@ -171,67 +308,45 @@ def execute_task_endpoint():
                 "redirect_url": notion_result["details"]["url"]
             })
 
+        # === 📩 Gmail meeting email ===
         elif action == "Write up an email for the meeting to a colleague":
+            subject = f"Meeting: {event_summary}"
+            body = f"Hi,\n\nI wanted to discuss our meeting scheduled for {event_summary}...\n\nBest,\n[Your Name]"
             if not recipient:
-                email_body = "Hi,\n\nI wanted to discuss our meeting...\n\nBest,\n[Your Name]"
-                encoded_body = urlencode({'body': email_body})
-                url_params = f"to=&subject=Meeting: {event_summary}&{encoded_body}"
-                email_url = "https://mail.google.com/mail/?view=cm&fs=1&" + url_params
+                email_url = f"https://mail.google.com/mail/?view=cm&fs=1&{urlencode({'to': '', 'subject': subject, 'body': body})}"
                 return jsonify({"action": "Redirect to Gmail", "redirect_url": email_url})
             else:
-                try:
-                    result = send_gmail(recipient, f"Meeting: {event_summary}", f"Hi,\n\nI wanted to discuss our meeting scheduled for {event_summary}...\n\nBest,\n[Your Name]")
-                except Exception as e:
-                    logger.error(f"Error sending email: {e}")
-                    return jsonify({'error': str(e)}), 500
+                return jsonify(send_gmail(recipient, subject, body))
 
         elif action == "Send an email to discuss concerns":
+            subject = f"Concerns about {event_summary}"
+            body = f"Hi,\n\nI wanted to discuss concerns about {event_summary}.\n\nBest,\n[Your Name]"
             if not recipient:
-                email_params = {
-                                    "to": "",
-                                    "subject": f"Concerns about {event_summary}",
-                                    "body": "Hi,\n\nI wanted to discuss concerns...\n\nBest,\n[Your Name]"
-                                }
-                email_url = "https://mail.google.com/mail/?view=cm&fs=1&" + urlencode(email_params)
+                email_url = f"https://mail.google.com/mail/?view=cm&fs=1&{urlencode({'to': '', 'subject': subject, 'body': body})}"
                 return jsonify({"action": "Redirect to Gmail", "redirect_url": email_url})
             else:
-                result = send_gmail(recipient, f"Concerns about {event_summary}", f"Hi,\n\nI wanted to discuss concerns about {event_summary}...\n\nBest,\n[Your Name]")
+                return jsonify(send_gmail(recipient, subject, body))
 
+        # === 📅 Follow-up meeting (Google Calendar) ===
         elif action == "Schedule a follow-up meeting":
             if not os.path.exists('token.json'):
-                try:
-                    auth_url = get_auth_url()
-                    return jsonify({'action': 'Requires authentication', 'auth_url': auth_url}), 401
-                except Exception as e:
-                    return jsonify({'error': f"Failed to initiate authentication: {str(e)}"}), 500
+                return jsonify({'action': 'Requires authentication', 'auth_url': get_auth_url()}), 401
             calendar_result = create_calendar_event(event_summary)
             return jsonify({"action": "Scheduled meeting", "details": calendar_result["details"]})
 
-        elif action == "Bring documents":
-            if not recipient:
-                email_params = {
-                                    "to": "",
-                                    "subject": f"Concerns about {event_summary}",
-                                    "body": "Hi,\n\nI wanted to discuss concerns...\n\nBest,\n[Your Name]"
-                                }
-                email_url = "https://mail.google.com/mail/?view=cm&fs=1&" + urlencode(email_params)
-                
-               
-                return jsonify({"action": "Redirect to Gmail", "redirect_url": email_url})
-            else:
-                result = send_gmail(recipient, f"Reminder: Bring documents for {event_summary}", f"Hi,\n\nThis is a reminder to bring documents for {event_summary}.\n\nBest,\n[Your Name]")
-
+        # === 📬 Slack notification ===
         elif action == "Plan schedule":
-            result = post_to_slack(f"Planning schedule for {event_summary}.")
+            result = post_to_slack(f"Planning schedule for {event_summary}.", user_id=user_id)
+            return jsonify(result)
 
         else:
-            result = {"action": "No action taken", "details": {}}
-
-        return jsonify(result)
+            return jsonify({"action": "No action taken", "details": {}})
 
     except Exception as e:
         logger.error(f"Error in execute_task: {e}")
         return jsonify({'error': str(e)}), 500
+
+
 
 @app.route('/download_slides/<path:filename>', methods=['GET'])
 def download_slides(filename):
@@ -253,11 +368,6 @@ def oauth2callback():
         return jsonify({'error': str(e)}), 500
 
 
-# 🔐 Slack OAuth routes
-@app.route("/auth/slack", methods=["GET"])
-def auth_slack():
-    return redirect(get_slack_auth_url())
-
 @app.route("/auth/slack/callback", methods=["GET"])
 def auth_slack_callback():
     code = request.args.get("code")
@@ -271,6 +381,28 @@ def auth_slack_callback():
         return jsonify({"message": "Slack authenticated successfully", "details": token_data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+
+@app.route("/auth/zoom", methods=["GET"])
+def auth_zoom():
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        return jsonify({"error": "Missing X-User-ID"}), 400
+    return redirect(get_zoom_auth_url(user_id))
+
+@app.route("/auth/zoom/callback", methods=["GET"])
+def auth_zoom_callback():
+    code = request.args.get("code")
+    user_id = request.args.get("state")  # pulled from get_zoom_auth_url
+    if not code or not user_id:
+        return jsonify({"error": "Missing code or user ID"}), 400
+    try:
+        tokens = handle_zoom_callback(code, user_id)
+        return jsonify({"message": "Zoom authenticated", "tokens": tokens})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 
 
 

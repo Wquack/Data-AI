@@ -10,6 +10,8 @@ from googleapiclient.errors import HttpError
 import base64
 from email.mime.text import MIMEText
 from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +218,39 @@ def send_gmail(to, subject, body):
     except Exception as e:
         logger.error(f"Error sending email via Gmail API: {e}")
         raise
+
+def create_calendar_event_with_zoom(topic, start_time, duration, zoom_link, user_id):
+    try:
+        # Load credentials from token.json or user store
+        creds = Credentials.from_authorized_user_file("token.json")  # 🔁 Replace with DB-based loading if needed
+        service = build("calendar", "v3", credentials=creds)
+
+        # Parse start_time
+        start_dt = datetime.fromisoformat(start_time)
+        end_dt = start_dt + timedelta(minutes=duration)
+
+        event = {
+            "summary": topic,
+            "description": f"Zoom Link: {zoom_link}",
+            "start": {
+                "dateTime": start_dt.isoformat(),
+                "timeZone": "Asia/Kolkata"
+            },
+            "end": {
+                "dateTime": end_dt.isoformat(),
+                "timeZone": "Asia/Kolkata"
+            }
+        }
+
+        created_event = service.events().insert(calendarId="primary", body=event).execute()
+        return {
+            "event_id": created_event["id"],
+            "html_link": created_event["htmlLink"]
+        }
+
+    except Exception as e:
+        raise Exception(f"Error creating Google Calendar event: {e}")
+
 
 def list_calendar_events(start_date=None, end_date=None, event_type=None, attendees=None):
     """List events within a date range from Google Calendar with optional filters."""
