@@ -302,37 +302,64 @@ def execute_task_endpoint():
 
         # === 📒 Notion note creation ===
         elif action == "Write important notes in Notion":
-            notion_result = create_notion_page(event_summary, parent_page_id)
+            zoom_link = data.get("zoom_link")
+            calendar_link = data.get("calendar_link")
+
+            extra_text = ""
+            if zoom_link:
+                extra_text += f"Zoom Meeting: {zoom_link}\n"
+            if calendar_link:
+                extra_text += f"Google Calendar: {calendar_link}\n"
+
+            notion_result = create_notion_page(
+            event_summary,
+            parent_page_id=parent_page_id,
+            extra_text=extra_text if extra_text else None
+)
+
             return jsonify({
-                "action": "Redirect to Notion",
+                "message": "Notion page created",
                 "redirect_url": notion_result["details"]["url"]
             })
 
         # === 📩 Gmail meeting email ===
         elif action == "Write up an email for the meeting to a colleague":
+            zoom_link = data.get("zoom_link")
+            calendar_link = data.get("calendar_link")
+
             subject = f"Meeting: {event_summary}"
-            body = f"Hi,\n\nI wanted to discuss our meeting scheduled for {event_summary}...\n\nBest,\n[Your Name]"
+            body = f"Hi,\n\nI wanted to discuss our meeting scheduled for {event_summary}..."
+
+            if zoom_link:
+                body += f"\n\nZoom Link: {zoom_link}"
+            if calendar_link:
+                body += f"\nCalendar Event: {calendar_link}"
+
+            body += "\n\nBest,\n[Your Name]"
+
             if not recipient:
+                # Redirect to Gmail compose with prefilled content
                 email_url = f"https://mail.google.com/mail/?view=cm&fs=1&{urlencode({'to': '', 'subject': subject, 'body': body})}"
                 return jsonify({"action": "Redirect to Gmail", "redirect_url": email_url})
             else:
+                # Send email via Gmail API
                 return jsonify(send_gmail(recipient, subject, body))
 
-        elif action == "Send an email to discuss concerns":
-            subject = f"Concerns about {event_summary}"
-            body = f"Hi,\n\nI wanted to discuss concerns about {event_summary}.\n\nBest,\n[Your Name]"
-            if not recipient:
-                email_url = f"https://mail.google.com/mail/?view=cm&fs=1&{urlencode({'to': '', 'subject': subject, 'body': body})}"
-                return jsonify({"action": "Redirect to Gmail", "redirect_url": email_url})
-            else:
-                return jsonify(send_gmail(recipient, subject, body))
 
         # === 📅 Follow-up meeting (Google Calendar) ===
-        elif action == "Schedule a follow-up meeting":
-            if not os.path.exists('token.json'):
-                return jsonify({'action': 'Requires authentication', 'auth_url': get_auth_url()}), 401
-            calendar_result = create_calendar_event(event_summary)
-            return jsonify({"action": "Scheduled meeting", "details": calendar_result["details"]})
+        elif action == "Send an email to discuss concerns":
+            subject = f"Concerns about {event_summary}"
+            body = (
+                f"Hi,\n\nI wanted to discuss some concerns I have about {event_summary}.\n"
+                "Could we set up a time to talk?\n\nBest,\n[Your Name]"
+            )
+
+            if not recipient:
+                email_url = f"https://mail.google.com/mail/?view=cm&fs=1&{urlencode({'to': '', 'subject': subject, 'body': body})}"
+                return jsonify({"action": "Redirect to Gmail", "redirect_url": email_url})
+            else:
+                return jsonify(send_gmail(recipient, subject, body))
+
 
         # === 📬 Slack notification ===
         elif action == "Plan schedule":
@@ -401,10 +428,6 @@ def auth_zoom_callback():
         return jsonify({"message": "Zoom authenticated", "tokens": tokens})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-
-
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

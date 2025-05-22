@@ -29,51 +29,82 @@ def list_notion_pages():
         logger.error(f"Error listing Notion pages: {e}")
         raise
 
-def create_notion_page(event_summary, parent_page_id=None):
+def create_notion_page(event_summary, parent_page_id=None, drive_link=None, extra_text=None):
     """Generate a new page in Notion under the specified parent page."""
     try:
         if not parent_page_id:
             parent_page_id = DEFAULT_PARENT_PAGE_ID
             logger.info(f"Using default parent page ID: {parent_page_id}")
 
-        # Append a timestamp to the page title to ensure uniqueness
+        # Unique title with timestamp
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         unique_title = f"Notes for {event_summary} - {timestamp}"
+
+        # Build dynamic blocks
+        children_blocks = []
+
+        # ✍️ Optional extra text (e.g., Zoom/Calendar summary)
+        if extra_text:
+            children_blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{
+                        "type": "text",
+                        "text": {"content": extra_text}
+                    }]
+                }
+            })
+
+        # 📎 Optional drive link block
+        if drive_link:
+            children_blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{
+                        "type": "text",
+                        "text": {"content": f"Slides: {drive_link}"}
+                    }]
+                }
+            })
+
+        # 🧾 Fallback block if no extra data
+        if not children_blocks:
+            children_blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{
+                        "type": "text",
+                        "text": {"content": "Review relevant project notes."}
+                    }]
+                }
+            })
 
         response = notion.pages.create(
             parent={"page_id": parent_page_id},
             properties={
                 "title": {
                     "type": "title",
-                    "title": [
-                        {
-                            "type": "text",
-                            "text": {
-                                "content": unique_title
-                            }
-                        }
-                    ]
+                    "title": [{
+                        "type": "text",
+                        "text": {"content": unique_title}
+                    }]
                 }
             },
-            children=[
-                {
-                    "object": "block",
-                    "type": "paragraph",
-                    "paragraph": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": "Review relevant project notes."
-                                }
-                            }
-                        ]
-                    }
-                }
-            ]
+            children=children_blocks
         )
+
         logger.info(f"Created Notion page: {response['url']}")
-        return {"action": "Created note", "details": {"page_id": response['id'], "url": response['url']}}
+        return {
+            "action": "Created note",
+            "details": {
+                "page_id": response['id'],
+                "url": response['url']
+            }
+        }
+
     except Exception as e:
         logger.error(f"Error creating Notion page: {e}")
         raise
