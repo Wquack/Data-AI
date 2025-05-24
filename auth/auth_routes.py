@@ -1,13 +1,25 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
-from sqlalchemy.orm import Session
-from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
-from models.user import User
-from utils.db import SessionLocal
-from utils.jwt_utils import create_access_token, decode_access_token
+import sys
+import requests
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session
+from utils.db import SessionLocal
+from models.user import User
+from passlib.context import CryptContext
+from utils.jwt_utils import generate_state_token, decode_state_token, create_access_token
+from utils.token_store import save_tokens
+from jose import JWTError
+import logging
+import requests
 
 router = APIRouter()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -27,37 +39,88 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-@router.post("/auth/register")
-def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
-    existing = db.query(User).filter_by(email=data.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="User already exists")
+@router.get("/ping")
+def ping():
+    return {"message": "pong"}
 
-    hashed_pw = pwd_context.hash(data.password)
-    new_user = User(email=data.email, password_hash=hashed_pw)
+@router.post("/auth/register")
+def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.email == request.email).first()
+    if existing_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
+
+    hashed_password = pwd_context.hash(request.password)
+    new_user = User(email=request.email, password_hash=hashed_password)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    return {"message": "User registered successfully"}
+
+    return {"message": "User registered successfully", "user_id": new_user.id}
 
 @router.post("/auth/login")
-def login_user(data: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter_by(email=data.email).first()
-    if not user or not pwd_context.verify(data.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+def login_user(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user or not pwd_context.verify(request.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    token = create_access_token({"user_id": user.email})
-    return {"message": "Login successful", "token": token}
+    access_token = create_access_token({"user_id": user.id})
+    return {"access_token": access_token, "token_type": "bearer"}
 
-# Middleware Dependency
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+# Middleware to get the current user from the token
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     try:
-        payload = decode_access_token(token)
-        return payload["user_id"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        payload = decode_state_token(token)
+        user_id = payload if isinstance(payload, str) else payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return user
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
-# Protected test route
-@router.get("/auth/protected")
-def protected_route(user_id: str = Depends(get_current_user)):
-    return {"message": f"Welcome, {user_id}. You have access to protected resources."}
+@router.get("/auth/me")
+def get_logged_in_user(current_user: User = Depends(get_current_user)):
+    return {"id": current_user.id, "email": current_user.email}
+
+@router.post("/auth/logout")
+def logout_user():
+    return {"message": "Successfully logged out"}
+
+# ✅ Zoom OAuth state-secure auth redirect
+@router.get("/auth/zoom")
+def auth_zoom(current_user: User = Depends(get_current_user)):
+    state_token = generate_state_token(current_user.id)
+    zoom_auth_url = f"https://zoom.us/oauth/authorize?response_type=code&client_id={os.getenv('ZOOM_CLIENT_ID')}&redirect_uri={os.getenv('ZOOM_REDIRECT_URI')}&state={state_token}"
+    return RedirectResponse(zoom_auth_url)
+
+@router.get("/auth/zoom/callback")
+def zoom_callback(request: Request, db: Session = Depends(get_db)):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    try:
+        user_id = decode_state_token(state)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid state token: {str(e)}")
+
+    # Exchange code for access token
+    token_url = "https://zoom.us/oauth/token"
+    headers = {"Authorization": f"Basic {os.getenv('ZOOM_BASIC_AUTH')}"}  # base64 encoded client_id:client_secret
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": os.getenv("ZOOM_REDIRECT_URI")
+    }
+
+    res = requests.post(token_url, headers=headers, data=payload)
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Zoom token exchange failed")
+
+    token_data = res.json()
+    save_tokens(user_id, {"zoom": token_data})
+    return {"message": "Zoom authorized successfully", "details": token_data}
