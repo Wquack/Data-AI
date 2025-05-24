@@ -7,8 +7,14 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if DATABASE_URL is None:
+    raise ValueError("DATABASE_URL environment variable not set")
+
+print("Loaded DATABASE_URL:", DATABASE_URL)
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # ✅ Add Base class for model declarations
 Base = declarative_base()
+# print("Loaded DATABASE_URL:", DATABASE_URL)
