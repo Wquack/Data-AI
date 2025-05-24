@@ -11,7 +11,7 @@ from utils.db import SessionLocal
 from models.user import User
 from passlib.context import CryptContext
 from utils.jwt_utils import generate_state_token, decode_state_token, create_access_token
-from utils.token_store import save_tokens
+from utils.token_store import save_tokens, load_tokens
 from jose import JWTError
 import logging
 
@@ -90,7 +90,7 @@ def logout_user():
 # ✅ Zoom OAuth state-secure auth redirect
 @router.get("/auth/zoom")
 def auth_zoom(current_user: User = Depends(get_current_user)):
-    state_token = generate_state_token(current_user.id)
+    state_token = generate_state_token(str(current_user.id))
     zoom_auth_url = f"https://zoom.us/oauth/authorize?response_type=code&client_id={os.getenv('ZOOM_CLIENT_ID')}&redirect_uri={os.getenv('ZOOM_REDIRECT_URI')}&state={state_token}"
     return RedirectResponse(zoom_auth_url)
 
@@ -128,7 +128,7 @@ def zoom_callback(request: Request, db: Session = Depends(get_db)):
 # ✅ Slack OAuth state-secure auth redirect
 @router.get("/auth/slack")
 def auth_slack(current_user: User = Depends(get_current_user)):
-    state_token = generate_state_token(current_user.id)
+    state_token = generate_state_token(str(current_user.id))
     slack_auth_url = f"https://slack.com/oauth/v2/authorize?client_id={os.getenv('SLACK_CLIENT_ID')}&scope=chat:write,channels:read,users:read&redirect_uri={os.getenv('SLACK_REDIRECT_URI')}&state={state_token}"
     return RedirectResponse(slack_auth_url)
 
@@ -161,3 +161,58 @@ def slack_callback(request: Request, db: Session = Depends(get_db)):
     token_data = res.json()
     save_tokens(user_id, {"slack": token_data})
     return {"message": "Slack authorized successfully", "details": token_data}
+
+@router.get("/auth/google")
+def auth_google(current_user: User = Depends(get_current_user)):
+    state_token = generate_state_token(str(current_user.id))
+    google_auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={os.getenv('GOOGLE_CLIENT_ID')}&"
+        f"redirect_uri={os.getenv('GOOGLE_REDIRECT_URI')}&"
+        f"response_type=code&"
+        f"scope=https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email&"
+        f"access_type=offline&"
+        f"state={state_token}"
+    )
+    return RedirectResponse(google_auth_url)
+
+@router.get("/auth/google/callback")
+def google_callback(request: Request, db: Session = Depends(get_db)):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    try:
+        user_id = decode_state_token(state)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid state token: {str(e)}")
+
+    token_url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "code": code,
+        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+        "redirect_uri": os.getenv("GOOGLE_REDIRECT_URI"),
+        "grant_type": "authorization_code"
+    }
+
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    res = requests.post(token_url, data=payload, headers=headers)
+
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Google token exchange failed")
+
+    token_data = res.json()
+    save_tokens(user_id, {"google": token_data})
+
+    return {"message": "Google authorized successfully", "details": token_data}
+
+# ✅ Phase IV: Token viewer
+@router.get("/auth/tokens")
+def view_tokens(current_user: User = Depends(get_current_user)):
+    token_data = load_tokens(current_user.id)
+    if not token_data:
+        raise HTTPException(status_code=404, detail="No tokens found for current user")
+    return {"tokens": token_data}
