@@ -14,7 +14,6 @@ from utils.jwt_utils import generate_state_token, decode_state_token, create_acc
 from utils.token_store import save_tokens
 from jose import JWTError
 import logging
-import requests
 
 router = APIRouter()
 
@@ -124,3 +123,41 @@ def zoom_callback(request: Request, db: Session = Depends(get_db)):
     token_data = res.json()
     save_tokens(user_id, {"zoom": token_data})
     return {"message": "Zoom authorized successfully", "details": token_data}
+
+
+# ✅ Slack OAuth state-secure auth redirect
+@router.get("/auth/slack")
+def auth_slack(current_user: User = Depends(get_current_user)):
+    state_token = generate_state_token(current_user.id)
+    slack_auth_url = f"https://slack.com/oauth/v2/authorize?client_id={os.getenv('SLACK_CLIENT_ID')}&scope=chat:write,channels:read,users:read&redirect_uri={os.getenv('SLACK_REDIRECT_URI')}&state={state_token}"
+    return RedirectResponse(slack_auth_url)
+
+@router.get("/auth/slack/callback")
+def slack_callback(request: Request, db: Session = Depends(get_db)):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    try:
+        user_id = decode_state_token(state)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid state token: {str(e)}")
+
+    # Exchange code for token
+    token_url = "https://slack.com/api/oauth.v2.access"
+    payload = {
+        "code": code,
+        "client_id": os.getenv("SLACK_CLIENT_ID"),
+        "client_secret": os.getenv("SLACK_CLIENT_SECRET"),
+        "redirect_uri": os.getenv("SLACK_REDIRECT_URI")
+    }
+
+    res = requests.post(token_url, data=payload)
+    if res.status_code != 200 or not res.json().get("ok"):
+        raise HTTPException(status_code=500, detail="Slack token exchange failed")
+
+    token_data = res.json()
+    save_tokens(user_id, {"slack": token_data})
+    return {"message": "Slack authorized successfully", "details": token_data}
