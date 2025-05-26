@@ -83,6 +83,57 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 def get_logged_in_user(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "email": current_user.email}
 
+
+#GOOGLE MEET AUTH
+
+@router.get("/auth/google_meet")
+def auth_google_meet(current_user: User = Depends(get_current_user)):
+    state_token = generate_state_token(current_user.id)
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={os.getenv('GOOGLE_CLIENT_ID')}&"
+        f"redirect_uri={os.getenv('GOOGLE_REDIRECT_URI')}&"
+        f"response_type=code&"
+        f"scope=https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email&"
+        f"access_type=offline&"
+        f"state={state_token}"
+    )
+    return RedirectResponse(auth_url)
+
+@router.get("/auth/google_meet/callback")
+def google_meet_callback(request: Request, db: Session = Depends(get_db)):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    try:
+        user_id = decode_state_token(state)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid state token: {str(e)}")
+
+    token_url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "code": code,
+        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+        "redirect_uri": os.getenv("GOOGLE_REDIRECT_URI"),
+        "grant_type": "authorization_code"
+    }
+
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    res = requests.post(token_url, data=payload, headers=headers)
+
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Google token exchange failed")
+
+    token_data = res.json()
+    save_tokens(user_id, {"google_meet": token_data})
+
+    return {"message": "Google Meet authorized successfully", "details": token_data}
+
+
 @router.post("/auth/logout")
 def logout_user():
     return {"message": "Successfully logged out"}
