@@ -209,6 +209,49 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
 
     return {"message": "Google authorized successfully", "details": token_data}
 
+@router.get("/auth/notion")
+def auth_notion(current_user: User = Depends(get_current_user)):
+    state_token = generate_state_token(current_user.id)
+    notion_auth_url = (
+        f"https://api.notion.com/v1/oauth/authorize?"
+        f"owner=user&client_id={os.getenv('NOTION_CLIENT_ID')}&"
+        f"redirect_uri={os.getenv('NOTION_REDIRECT_URI')}&"
+        f"response_type=code&state={state_token}"
+    )
+    return RedirectResponse(notion_auth_url)
+
+@router.get("/auth/notion/callback")
+def notion_callback(request: Request, db: Session = Depends(get_db)):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    try:
+        user_id = decode_state_token(state)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid state token: {str(e)}")
+
+    token_url = "https://api.notion.com/v1/oauth/token"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": os.getenv("NOTION_REDIRECT_URI"),
+        "client_id": os.getenv("NOTION_CLIENT_ID"),
+        "client_secret": os.getenv("NOTION_CLIENT_SECRET")
+    }
+
+    res = requests.post(token_url, json=payload, headers=headers)
+
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Notion token exchange failed")
+
+    token_data = res.json()
+    save_tokens(user_id, {"notion": token_data})
+
+    return {"message": "Notion authorized successfully", "details": token_data}
 # ✅ Phase IV: Token viewer
 @router.get("/auth/tokens")
 def view_tokens(current_user: User = Depends(get_current_user)):
