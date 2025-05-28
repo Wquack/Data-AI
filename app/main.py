@@ -1,19 +1,15 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.routes import router as app_routes
 from auth.auth_routes import router as auth_routes
 from utils.db import Base, engine, SessionLocal
+from models import user, user_token  # Ensure this imports all models
 import os
-from sqlalchemy import create_engine
-from models import user, user_token
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if DATABASE_URL is None:
-    raise ValueError("DATABASE_URL environment variable not set")
-
-engine = create_engine(DATABASE_URL)
-
+# --- Create Tables ---
 Base.metadata.create_all(bind=engine)
 
+# --- DB Dependency ---
 def get_db():
     db = SessionLocal()
     try:
@@ -21,8 +17,22 @@ def get_db():
     finally:
         db.close()
 
+# --- FastAPI App ---
 app = FastAPI()
 
-# Mount all routers
+# --- CORS Setup ---
+origins = [
+    "http://localhost:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Include Routers ---
 app.include_router(app_routes)
 app.include_router(auth_routes)
