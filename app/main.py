@@ -23,6 +23,7 @@ app = FastAPI()
 # --- CORS Setup ---
 origins = [
     "http://localhost:5173",
+    "https://chat.data-ai.co"
 ]
 
 app.add_middleware(
