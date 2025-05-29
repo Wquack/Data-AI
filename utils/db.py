@@ -18,7 +18,6 @@ print(f"✅ Loaded DATABASE_URL: {DATABASE_URL}")
 # --- SQLAlchemy Setup ---
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-<<<<<<< HEAD
 
 Base = declarative_base()
 
@@ -28,6 +27,5 @@ def get_db():
         yield db
     finally:
         db.close()
-=======
 Base = declarative_base()
->>>>>>> 8d73dd69d899bcdfd05e62c74345dc04d083c366
+

@@ -64,8 +64,10 @@ def handle_slack_callback(code, user_id):
     }
 
 
-def post_to_slack(message, user_id):
+def post_to_slack(message, user_id=None):
     try:
+        if user_id is None:
+            raise Exception("User ID is required to post to Slack.")
         tokens = load_tokens(user_id)
         slack_token = tokens.get("slack", {}).get("access_token")
         if not slack_token:

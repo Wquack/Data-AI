@@ -1,41 +1,44 @@
 import sys
-import requests
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse as redirect
-import mimetypes
-from .recommendation import get_recommendation, process_user_message, chat_with_distilbert
-from .calendar_api import create_calendar_event, list_calendar_events, upload_to_drive, send_gmail, create_calendar_event_with_zoom
-from .encryption import encrypt_data
-from .slack_oauth import get_slack_auth_url, handle_slack_callback, post_to_slack
-from .zoom_oauth import get_zoom_auth_url, handle_zoom_callback, refresh_zoom_token
-from utils.jwt_utils import generate_state_token, decode_state_token
-from .notion_api import create_notion_page, list_notion_pages
-from .powerpoint_api import create_powerpoint_slides
+import json
 import logging
-from utils.token_store import load_tokens
-from datetime import date, datetime, timedelta
+import mimetypes
+import traceback
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
-from fastapi import Depends
-from auth.auth_routes import get_current_user
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from fastapi import APIRouter, Request, HTTPException, Depends, Body
+from fastapi.responses import RedirectResponse, FileResponse
 from pydantic import BaseModel
-from typing import List
-from fastapi import Body
 from sqlalchemy.orm import Session
 from models.user import User
 from utils.db import get_db
-
-class ChatMessage(BaseModel):
-    message: str
-
+from utils.token_store import load_tokens
+from auth.auth_routes import get_current_user
+from utils.jwt_utils import generate_state_token, decode_state_token
+from .recommendation import process_user_message, chat_with_mistral
+from .calendar_api import create_calendar_event, list_calendar_events, upload_to_drive, send_gmail, create_calendar_event_with_zoom
+from .encryption import encrypt_data
+from .mistral_api import call_mistral_api
+from .slack_oauth import get_slack_auth_url, handle_slack_callback, post_to_slack
+from .zoom_oauth import get_zoom_auth_url, handle_zoom_callback, refresh_zoom_token
+from .notion_api import create_notion_page, list_notion_pages
+from .powerpoint_api import create_powerpoint_slides
+import requests
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+class ChatMessage(BaseModel):
+    message: str
 
 @router.get("/ping")
 def ping():
@@ -56,15 +59,49 @@ async def recommend_task_logic(request: Request):
         encrypted_summary = encrypt_data(event_summary)
         logger.info("Input encrypted")
 
-        recommendation = get_recommendation(event_summary)
-        return {'recommendation': recommendation}
+        # Note: get_recommendation was removed in recommendation.py; this endpoint may need reimplementation
+        raise HTTPException(status_code=501, detail="Recommendation functionality is not implemented")
     except Exception as e:
-        logger.error(f"Error processing recommend task request: {str(e)}")
+        logger.error(f"Error processing recommend task request: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
 @router.post('/recommend')
 async def recommend_task(request: Request):
     return await recommend_task_logic(request)
+
+async def chat_endpoint_logic(request: Request):
+    try:
+        data = await request.json()
+        if not data:
+            logger.warning("No data received")
+            raise HTTPException(status_code=400, detail='No data provided')
+        message = data.get('message', '')
+        if not isinstance(message, str) or not message.strip():
+            logger.warning("Invalid message")
+            raise HTTPException(status_code=400, detail='Message must be a non-empty string')
+
+        current_user: User = Depends(get_current_user)
+        user_id = str(current_user.id)
+
+        logger.info(f"Received user message for user {user_id}: {message}")
+        response = await call_mistral_api(message, user_id)
+        logger.info(f"Chat endpoint response for user {user_id}: {json.dumps(response, indent=2)}")
+        if response is not None:
+            return {
+                "response": response.get("response"),
+                "suggestions": response.get("suggestions", [])
+            }
+        else:
+            return {"response": None, "suggestions": []}
+    except Exception as e:
+        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+        if "google authentication required" in str(e).lower():
+            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
+        raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
+
+@router.post('/chat')
+async def chat_endpoint(request: Request, current_user: User = Depends(get_current_user)):
+    return await chat_endpoint_logic(request, str(current_user.id))
 
 async def chat_endpoint_logic(request: Request, user_id: str):
     try:
@@ -78,41 +115,44 @@ async def chat_endpoint_logic(request: Request, user_id: str):
             raise HTTPException(status_code=400, detail='Message must be a non-empty string')
 
         logger.info(f"Received user message for user {user_id}: {message}")
-        result = process_user_message(message, user_id)
-        logger.info(f"Chat endpoint response for user {user_id}: {result}")
+        result = await process_user_message(message, user_id)  # Ensure process_user_message is awaited
+        logger.info(f"Chat endpoint response for user {user_id}: {json.dumps(result, indent=2)}")
+
+        if result:
+            current_hour = datetime.now().hour
+            if 5 <= current_hour < 12:
+                greeting = "Good morning!"
+            elif 12 <= current_hour < 17:
+                greeting = "Good afternoon!"
+            elif 17 <= current_hour < 22:
+                greeting = "Good evening!"
+            else:
+                greeting = "Good night!"
+            result["response"] = f"{greeting} {result['response']}"
+
+            productivity_tips = (
+                "\n\nTo improve your productivity, consider using the following strategies:\n\n"
+                "- Prioritize your tasks: Use the Eisenhower Matrix to categorize tasks based on their urgency and importance.\n"
+                "- Use reminders: Set up reminders for important tasks in Google Calendar or your preferred productivity app.\n"
+                "- Batch similar tasks: Group similar tasks together to increase efficiency and reduce context switching.\n"
+                "- Take breaks: Regular short breaks can help maintain focus and boost productivity. Try the Pomodoro Technique for focused work sessions followed by short breaks.\n"
+                "- Limit distractions: Use tools like Freedom or Cold Turkey to block distracting websites while you work.\n"
+                "- Use collaborative tools: Utilize Slack or Microsoft Teams for real-time communication and collaboration with your team members.\n\n"
+                "Stay productive and have a great day!"
+            )
+            result["response"] = f"{result['response']}{productivity_tips}"
+
         return result
     except Exception as e:
-        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}")
-        if "Google authentication required" in str(e):
+        # Log the error with the user_id, which is now guaranteed to be defined
+        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+        if "google authentication required" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
 
-@router.post('/chat')
-async def chat_endpoint(request: Request, current_user: User = Depends(get_current_user)):
-    return await chat_endpoint_logic(request, str(current_user.id))
-
-async def chat_with_distilbert_endpoint_logic(request: Request, user_id: str):
-    try:
-        data = await request.json()
-        if not data:
-            logger.warning("No data received")
-            raise HTTPException(status_code=400, detail='No data provided')
-        message = data.get('message', '')
-        if not isinstance(message, str) or not message.strip():
-            logger.warning("Invalid message")
-            raise HTTPException(status_code=400, detail='Message must be a non-empty string')
-
-        logger.info(f"Received user message for Mistral for user {user_id}: {message}")
-        result = chat_with_distilbert(message, user_id)
-        logger.info(f"Mistral response for user {user_id}: {result}")
-        return result
-    except Exception as e:
-        logger.error(f"Error in chat_with_distilbert endpoint for user {user_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing Mistral chat request: {str(e)}")
-
-@router.post('/chat_with_distilbert')
-async def chat_with_distilbert_endpoint(request: Request, current_user: User = Depends(get_current_user)):
-    return await chat_with_distilbert_endpoint_logic(request, str(current_user.id))
+@router.post('/chat_with_mistral')
+async def chat_with_mistral_endpoint(request: Request, current_user: User = Depends(get_current_user)):
+    return await chat_with_mistral_endpoint_logic(request, str(current_user.id))
 
 def create_zoom_meeting_logic(data, user_id):
     topic = data.get('topic', 'AI Meeting')
@@ -173,7 +213,7 @@ def create_zoom_meeting_logic(data, user_id):
             "start_time": result["start_time"]
         }
     except Exception as e:
-        logger.error(f"Error creating Zoom meeting for user {user_id}: {str(e)}")
+        logger.error(f"Error creating Zoom meeting for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error creating Zoom meeting: {str(e)}")
 
 @router.post('/create_zoom_meeting')
@@ -183,6 +223,7 @@ async def create_zoom_meeting(request: Request, current_user: User = Depends(get
         user_id = str(current_user.id)
         return create_zoom_meeting_logic(data, user_id)
     except Exception as e:
+        logger.error(f"Error in create_zoom_meeting endpoint for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 async def list_notion_pages_endpoint_logic(user_id: str):
@@ -190,14 +231,38 @@ async def list_notion_pages_endpoint_logic(user_id: str):
         pages = list_notion_pages(user_id)
         return {'pages': pages}
     except Exception as e:
-        logger.error(f"Error listing Notion pages for user {user_id}: {str(e)}")
-        if "Notion token not found" in str(e):
+        logger.error(f"Error listing Notion pages for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+        if "notion token not found" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/notion"})
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get('/list_notion_pages')
 async def list_notion_pages_endpoint(current_user: User = Depends(get_current_user)):
     return await list_notion_pages_endpoint_logic(str(current_user.id))
+
+@router.get('/list_notion_tasks')
+async def list_notion_tasks_endpoint(current_user: User = Depends(get_current_user)):
+    try:
+        # Fetch tasks from Notion (simplified example)
+        tasks = [
+            {"title": "updating the company's mission statement", "section": "Projects"}
+        ]
+        return {"tasks": tasks}
+    except Exception as e:
+        logger.error(f"Error listing Notion tasks for user {current_user.id}: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get('/list_drive_deadlines')
+async def list_drive_deadlines_endpoint(request: Request, current_user: User = Depends(get_current_user)):
+    try:
+        # Fetch deadlines from Google Drive (simplified example)
+        deadlines = [
+            {"title": "the quarterly report", "folder": "Quarterly Reports"}
+        ]
+        return {"deadlines": deadlines}
+    except Exception as e:
+        logger.error(f"Error listing Google Drive deadlines for user {current_user.id}: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def list_calendar_events_endpoint_logic(request: Request, user_id: str):
     try:
@@ -223,8 +288,8 @@ async def list_calendar_events_endpoint_logic(request: Request, user_id: str):
         events = list_calendar_events(user_id, start_date, end_date, event_type, attendees)
         return {'events': events}
     except Exception as e:
-        logger.error(f"Error listing calendar events for user {user_id}: {str(e)}")
-        if "Google authentication required" in str(e):
+        logger.error(f"Error listing calendar events for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+        if "google authentication required" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
         raise HTTPException(status_code=500, detail=f"Error listing calendar events: {str(e)}")
 
@@ -240,7 +305,7 @@ async def download_slides(filename: str):
         mimetype_guess = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         return FileResponse(path=os.path.join(directory, filename), media_type=mimetype_guess, filename=filename)
     except Exception as e:
-        logger.error(f"Error downloading slides: {str(e)}")
+        logger.error(f"Error downloading slides: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.get('/oauth2callback')
@@ -259,7 +324,7 @@ async def auth_slack_callback(request: Request):
         token_data = handle_slack_callback(code, user_id)
         return {"message": "Slack authenticated successfully", "details": token_data}
     except Exception as e:
-        logger.error(f"Error in Slack auth callback for user {user_id}: {str(e)}")
+        logger.error(f"Error in Slack auth callback for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/auth/zoom")
@@ -269,7 +334,7 @@ async def auth_zoom(request: Request):
         raise HTTPException(status_code=400, detail="Missing X-User-ID")
 
     state_token = generate_state_token(user_id)
-    return redirect(get_zoom_auth_url() + f"&state={state_token}")
+    return RedirectResponse(get_zoom_auth_url() + f"&state={state_token}")
 
 @router.get("/auth/zoom/callback")
 async def auth_zoom_callback(request: Request):
@@ -283,7 +348,7 @@ async def auth_zoom_callback(request: Request):
         tokens = handle_zoom_callback(code, user_id)
         return {"message": "Zoom authenticated", "tokens": tokens}
     except Exception as e:
-        logger.error(f"Error in Zoom auth callback: {str(e)}")
+        logger.error(f"Error in Zoom auth callback: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/execute_task")
@@ -293,7 +358,6 @@ def execute_task_endpoint(
     current_user: User = Depends(get_current_user),
     body: dict = Body(...)
 ):
-    user_id = str(current_user.id)
     action = body.get("action", "")
     event_summary = body.get("event_summary", "")
     parent_page_id = body.get("parent_page_id", None)
@@ -302,28 +366,13 @@ def execute_task_endpoint(
     recipient = body.get("recipient", "")
     slack_channel = body.get("slack_channel", "")
 
-    if not action or not event_summary:
-        raise HTTPException(status_code=400, detail="Missing action or event summary")
-
-    # Validate environment variables only for relevant actions
-    if action in ["Setup full Zoom meeting", "Create a Zoom Meeting", "Add a Reminder to Zoom"]:
-        if not all([os.getenv('ZOOM_CLIENT_ID'), os.getenv('ZOOM_REDIRECT_URI'), os.getenv('ZOOM_BASIC_AUTH')]):
-            raise HTTPException(status_code=500, detail="Zoom environment variables not configured")
-    if action in ["Post update on Slack", "Send a Slack Reminder"]:
-        if not all([os.getenv('SLACK_CLIENT_ID'), os.getenv('SLACK_CLIENT_SECRET'), os.getenv('SLACK_REDIRECT_URI')]):
-            raise HTTPException(status_code=500, detail="Slack environment variables not configured")
-    if action in ["Write email to colleague"]:
-        if not all([os.getenv('GOOGLE_CLIENT_ID'), os.getenv('GOOGLE_CLIENT_SECRET'), os.getenv('GOOGLE_REDIRECT_URI')]):
-            raise HTTPException(status_code=500, detail="Google environment variables not configured")
-    if action in ["Write important notes in Notion"]:
-        if not all([os.getenv('NOTION_CLIENT_ID'), os.getenv('NOTION_CLIENT_SECRET'), os.getenv('NOTION_REDIRECT_URI')]):
-            raise HTTPException(status_code=500, detail="Notion environment variables not configured")
+    user_id = str(current_user.id)
 
     tokens = load_tokens(user_id)
 
     try:
         if action == "Write important notes in Notion":
-            result = create_notion_page(event_summary, parent_page_id, user_id=user_id)
+            result = create_notion_page(event_summary, parent_page_id, user_id)
             return {"message": "Notion page created", "notion": result}
 
         elif action == "Setup full Zoom meeting" or action == "Create a Zoom Meeting":
@@ -359,7 +408,7 @@ def execute_task_endpoint(
                 user_id=user_id
             )
             slack_result = post_to_slack(
-                f"Reminder: {event_summary} on {start_time if start_time else datetime.now().isoformat()} via Zoom: {zoom_data['zoom_link']}",
+                message=f"Reminder: {event_summary} on {start_time if start_time else datetime.now().isoformat()} via Zoom: {zoom_data['zoom_link']}",
                 user_id=user_id
             )
             return {
@@ -383,9 +432,9 @@ def execute_task_endpoint(
         else:
             return {"message": f"No handler implemented for action '{action}'"}
     except Exception as e:
-        logger.error(f"Error executing task for user {user_id}: {str(e)}")
-        if "Google authentication required" in str(e):
+        logger.error(f"Error executing task for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+        if "google authentication required" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
-        if "Notion token not found" in str(e):
+        if "notion token not found" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/notion"})
         raise HTTPException(status_code=500, detail=str(e))
