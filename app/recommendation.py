@@ -218,12 +218,12 @@ def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""
             suggestions.append({
                 "action": "Break down tasks in Notion",
                 "service": "notion",
-                "description": "Create a Notion page to break down your project tasks."
+                "description": "Create a Notion page to outline tasks for the project or deadline."
             })
             suggestions.append({
-                "action": "Ask for an extension via email",
-                "service": "gmail",
-                "description": "Draft an email to request a deadline extension."
+                "action": "Set a calendar reminder",
+                "service": "calendar",
+                "description": "Add a reminder to Google Calendar for the deadline."
             })
         else:
             suggestions.append({
@@ -278,8 +278,8 @@ def extract_crisp_response(mistral_response, sentiment):
         else:
             return "Sorry to hear you're facing challenges!"
 
-def generate_contextual_response(suggestions, sentiment):
-    """Generate a contextual follow-up based on the sentiment and suggestions."""
+def generate_contextual_response(suggestions, sentiment, message_lower):
+    """Generate a contextual follow-up based on the sentiment, suggestions, and message context."""
     if not suggestions:
         return "Consider planning your next steps to stay on track."
 
@@ -287,10 +287,15 @@ def generate_contextual_response(suggestions, sentiment):
     primary_suggestion = suggestions[0]
     action = primary_suggestion["action"]
     service = primary_suggestion["service"]
-    description = primary_suggestion["description"]
+
+    # Check if the message contains celebratory keywords to use "celebrate" tone
+    is_celebratory = any(keyword in message_lower for keyword in ["celebrate", "milestone", "success", "achieve"])
 
     if sentiment == "positive":
-        return f"To celebrate, try to {action.lower()} using {service}."
+        if is_celebratory:
+            return f"To celebrate, try to {action.lower()} using {service}."
+        else:
+            return f"To stay on track, try to {action.lower()} using {service}."
     else:
         return f"To manage this, try to {action.lower()} using {service}."
 
@@ -300,6 +305,7 @@ async def chat_with_mistral(message, user_id):
     mistral_response = "I couldn't process the request due to an error."
     suggestions = []
     notion_pages = []
+    message_lower = message.lower()  # Compute message_lower for use in contextual response
 
     try:
         messages = [
@@ -386,7 +392,7 @@ async def chat_with_mistral(message, user_id):
         crisp_response = extract_crisp_response(mistral_response, sentiment)
 
         # Generate a contextual follow-up based on suggestions
-        contextual_response = generate_contextual_response(suggestions, sentiment)
+        contextual_response = generate_contextual_response(suggestions, sentiment, message_lower)  # Pass message_lower
 
         # Combine the crisp response and contextual response
         final_response = f"{crisp_response} {contextual_response}"
@@ -429,7 +435,7 @@ async def chat_with_mistral(message, user_id):
         crisp_response = extract_crisp_response("Sorry, I couldn't process your request right now.", sentiment)
 
         # Generate a contextual follow-up based on suggestions
-        contextual_response = generate_contextual_response(suggestions, sentiment)
+        contextual_response = generate_contextual_response(suggestions, sentiment, message_lower)  # Pass message_lower
 
         # Combine the crisp response and contextual response
         final_response = f"{crisp_response} {contextual_response}"
