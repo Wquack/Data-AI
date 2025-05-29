@@ -203,18 +203,8 @@ def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""
                 "description": "Send an email to your team to celebrate your positive mood."
             })
     else:
-        if 'overwhelmed' in message_lower or 'stress' in message_lower or 'overwhelmed' in mistral_lower:
-            suggestions.append({
-                "action": "Organize thoughts in Notion",
-                "service": "notion",
-                "description": "Create a Notion page to organize your thoughts and reduce stress."
-            })
-            suggestions.append({
-                "action": "Request support via email",
-                "service": "gmail",
-                "description": "Draft an email to a colleague to request support or assistance."
-            })
-        elif 'project' in message_lower or 'deadline' in mistral_lower:
+        # Prioritize deadline-specific suggestions over general stress-related ones
+        if 'project' in message_lower or 'deadline' in mistral_lower:
             suggestions.append({
                 "action": "Break down tasks in Notion",
                 "service": "notion",
@@ -224,6 +214,17 @@ def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""
                 "action": "Set a calendar reminder",
                 "service": "calendar",
                 "description": "Add a reminder to Google Calendar for the deadline."
+            })
+        elif 'overwhelmed' in message_lower or 'stress' in message_lower or 'overwhelmed' in mistral_lower:
+            suggestions.append({
+                "action": "Organize thoughts in Notion",
+                "service": "notion",
+                "description": "Create a Notion page to organize your thoughts and reduce stress."
+            })
+            suggestions.append({
+                "action": "Request support via email",
+                "service": "gmail",
+                "description": "Draft an email to a colleague to request support or assistance."
             })
         else:
             suggestions.append({
@@ -291,13 +292,20 @@ def generate_contextual_response(suggestions, sentiment, message_lower):
     # Check if the message contains celebratory keywords to use "celebrate" tone
     is_celebratory = any(keyword in message_lower for keyword in ["celebrate", "milestone", "success", "achieve"])
 
+    # Extract the verb phrase from the action (remove the service name if present)
+    action_lower = action.lower()
+    if service.lower() in action_lower:
+        action_phrase = action_lower.replace(service.lower(), "").strip()
+    else:
+        action_phrase = action_lower
+
     if sentiment == "positive":
         if is_celebratory:
-            return f"To celebrate, try to {action.lower()} using {service}."
+            return f"To celebrate, try to {action_phrase} using {service.capitalize()}."
         else:
-            return f"To stay on track, try to {action.lower()} using {service}."
+            return f"To stay on track, try to {action_phrase} using {service.capitalize()}."
     else:
-        return f"To manage this, try to {action.lower()} using {service}."
+        return f"To manage this, try to {action_phrase} using {service.capitalize()}."
 
 async def chat_with_mistral(message, user_id):
     # Define default values for variables used in all paths
@@ -392,7 +400,7 @@ async def chat_with_mistral(message, user_id):
         crisp_response = extract_crisp_response(mistral_response, sentiment)
 
         # Generate a contextual follow-up based on suggestions
-        contextual_response = generate_contextual_response(suggestions, sentiment, message_lower)  # Pass message_lower
+        contextual_response = generate_contextual_response(suggestions, sentiment, message_lower)
 
         # Combine the crisp response and contextual response
         final_response = f"{crisp_response} {contextual_response}"
@@ -435,7 +443,7 @@ async def chat_with_mistral(message, user_id):
         crisp_response = extract_crisp_response("Sorry, I couldn't process your request right now.", sentiment)
 
         # Generate a contextual follow-up based on suggestions
-        contextual_response = generate_contextual_response(suggestions, sentiment, message_lower)  # Pass message_lower
+        contextual_response = generate_contextual_response(suggestions, sentiment, message_lower)
 
         # Combine the crisp response and contextual response
         final_response = f"{crisp_response} {contextual_response}"
