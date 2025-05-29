@@ -3,6 +3,7 @@ import torch
 import logging
 import requests
 from datetime import date, timedelta, datetime
+from mistral_api import call_mistral_api
 
 logger = logging.getLogger(__name__)
 
@@ -137,46 +138,49 @@ def get_recommendation(event_summary):
     suggestions = generate_action_suggestions(event_summary)
     return suggestions[0]["action"] if suggestions else "No task recommended"
 
-def chat_with_distilbert(message):
-    """Directly interact with DistilBERT to classify sentiment and return a response with actionable suggestions."""
+
+def chat_with_distilbert(message, user_id):
     try:
-        inputs = tokenizer(message, return_tensors="pt", padding=True, truncation=True)
-        logger.info(f"Tokenized input: {inputs['input_ids']}")
-        with torch.no_grad():
-            outputs = model(**inputs)
-        logits = outputs.logits
-        predicted_class = torch.argmax(logits, dim=1).item()
-        logger.info(f"Predicted class for message '{message}': {predicted_class}")
-        
-        # Map the predicted class to a sentiment label
-        sentiment = "positive" if predicted_class == 1 else "negative"
-        confidence = float(torch.softmax(logits, dim=1)[0][predicted_class])
-        
-        # Generate actionable suggestions based on sentiment
+        # Prepare messages for Mistral API
+        messages = [
+            {"role": "system", "content": "You are a helpful productivity assistant. Analyze the user's message, determine their sentiment (positive or negative), and provide a conversational response with actionable suggestions to improve their productivity. Suggestions should involve services like Google Calendar, Notion, Gmail, or Slack."},
+            {"role": "user", "content": message}
+        ]
+
+        # Call Mistral API
+        response = call_mistral_api(messages)
+        mistral_response = response["choices"][0]["message"]["content"]
+
+        # Extract sentiment and suggestions (you may need to parse Mistral's response)
+        # For simplicity, assume Mistral includes sentiment in the response (e.g., "Sentiment: positive")
+        sentiment = "positive" if "positive" in mistral_response.lower() else "negative"
+        confidence = 0.9  # Placeholder; Mistral doesn't provide confidence, but you can add logic to estimate it
+
+        # Generate suggestions based on sentiment
         suggestions = generate_sentiment_based_suggestions(message, sentiment)
-        
-        # Fetch Notion pages for Notion-related actions
+
+        # Fetch Notion pages if needed
         notion_pages = fetch_notion_pages() if any(s["service"] == "notion" for s in suggestions) else []
         notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
 
-        response = {
+        # Construct response
+        conversational_response = mistral_response
+        return {
             "message": message,
             "sentiment": sentiment,
             "confidence": confidence,
-            "conversational_response": "Looks like you're feeling positive! Let's take some actions to keep the momentum going." if predicted_class == 1 else "Seems like you're feeling a bit negative. Let's take some actions to help you reflect.",
+            "conversational_response": conversational_response,
             "suggestions": suggestions,
             "notion_pages": notion_page_options
         }
-        return response
     except Exception as e:
         logger.error(f"Error in chat_with_distilbert: {e}")
         raise
 
-def process_user_message(message):
-    """Process a user message and return a response with multiple suggested actions."""
+def process_user_message(message, user_id):
     try:
         message_lower = message.lower()
-        
+
         # Determine the target date range
         start_date = None
         end_date = None
@@ -190,11 +194,10 @@ def process_user_message(message):
         elif "all the available events" in message_lower:
             start_date = date.today().strftime('%Y-%m-%d')
             end_date = (date.today() + timedelta(days=30)).strftime('%Y-%m-%d')
-        
+
         # Intent: Fetch events
         if "events" in message_lower:
             events_result = fetch_calendar_events(start_date, end_date)
-            # Check if authentication is required
             if isinstance(events_result, dict) and events_result.get("requires_auth"):
                 return {
                     "response": "Authentication required to access Google Calendar.",
@@ -205,42 +208,44 @@ def process_user_message(message):
             if not events:
                 date_range = "today" if "today" in message_lower else "tomorrow" if "tomorrow" in message_lower else "the next 30 days"
                 return {"response": f"I couldn't find any events for {date_range}."}
-            
+
             date_range = "today" if "today" in message_lower else "tomorrow" if "tomorrow" in message_lower else "the next 30 days"
             response = f"Here are your events for {date_range}:\n"
             suggestions = []
             for event in events:
-                event_summary = event["summary"].strip()  # Remove extra spaces
+                event_summary = event["summary"].strip()
                 start_time = event["start"]
                 response += f"- {event_summary} at {start_time}\n"
-                # Generate multiple action suggestions for each event
                 event_suggestions = generate_action_suggestions(event_summary)
                 for suggestion in event_suggestions:
                     suggestion["event_summary"] = event_summary
                     suggestion["calendar_link"] = event["link"]
                 suggestions.extend(event_suggestions)
-            
-            # Fetch Notion pages for suggestions involving Notion
-            notion_pages = fetch_notion_pages()
+
+            notion_pages = fetch_notion_pages() if any(s["service"] == "notion" for s in suggestions) else []
             notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
-            
+
             return {
                 "response": response.strip(),
                 "suggestions": suggestions,
                 "notion_pages": notion_page_options if suggestions else []
             }
-        
-        # Intent: General recommendation based on user input
+
+        # Intent: General conversation using Mistral
         else:
+            messages = [
+                {"role": "system", "content": "You are a helpful productivity assistant. Provide a conversational response to the user's message and suggest actions to improve their productivity using services like Google Calendar, Notion, Gmail, or Slack."},
+                {"role": "user", "content": message}
+            ]
+            mistral_response = call_mistral_api(messages)
+            conversational_response = mistral_response["choices"][0]["message"]["content"]
+
             suggestions = generate_action_suggestions(message)
-            if not suggestions:
-                return {"response": "I don't have any specific recommendations for that. Try asking about your events!"}
-            
             notion_pages = fetch_notion_pages() if any(s["service"] == "notion" for s in suggestions) else []
             notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
-            
+
             return {
-                "response": f"I have some suggestions for '{message}':",
+                "response": conversational_response,
                 "suggestions": [{"event_summary": message, **s} for s in suggestions],
                 "notion_pages": notion_page_options
             }

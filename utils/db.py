@@ -15,6 +15,11 @@ print("Loaded DATABASE_URL:", DATABASE_URL)
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# ✅ Add Base class for model declarations
 Base = declarative_base()
-# print("Loaded DATABASE_URL:", DATABASE_URL)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

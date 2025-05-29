@@ -1,7 +1,6 @@
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import os
 import logging
@@ -9,9 +8,7 @@ from datetime import datetime, timedelta, date
 from googleapiclient.errors import HttpError
 import base64
 from email.mime.text import MIMEText
-from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+from utils.token_store import load_tokens, save_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -24,134 +21,114 @@ SCOPES = [
     'https://www.googleapis.com/auth/userinfo.email',
     'openid'
 ]
-CREDENTIALS_FILE = 'client_secret.json'
-TOKEN_FILE = 'token.json'
 
-def get_calendar_service():
+def get_calendar_service(user_id):
     """Get authenticated Google Calendar service."""
+    tokens = load_tokens(user_id)
+    google_tokens = tokens.get("google", {})
     creds = None
-    if os.path.exists(TOKEN_FILE):
-        try:
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-            logger.info("Loaded credentials from token.json")
-        except Exception as e:
-            logger.error(f"Error loading token.json: {e}")
-            os.remove(TOKEN_FILE)
+    if "access_token" in google_tokens:
+        creds = Credentials(
+            token=google_tokens["access_token"],
+            refresh_token=google_tokens.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            scopes=SCOPES
+        )
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                logger.info("Refreshed credentials")
+                save_tokens(user_id, {"google": {
+                    "access_token": creds.token,
+                    "refresh_token": creds.refresh_token,
+                    "expires_in": (creds.expiry - datetime.utcnow()).seconds if creds.expiry is not None else None
+                }})
+                logger.info(f"Refreshed Google credentials for user {user_id}")
             except Exception as e:
-                logger.error(f"Error refreshing token: {e}")
-                os.remove(TOKEN_FILE)
-                creds = None
-        if not creds:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-            logger.info("Authenticated via OAuth flow")
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
-            logger.info("Saved credentials to token.json")
+                logger.error(f"Error refreshing Google token for user {user_id}: {e}")
+                raise Exception("Failed to refresh Google token")
+        else:
+            raise Exception("Google authentication required")
     return build('calendar', 'v3', credentials=creds)
 
-def get_drive_service():
+def get_drive_service(user_id):
     """Get authenticated Google Drive service."""
+    tokens = load_tokens(user_id)
+    google_tokens = tokens.get("google", {})
     creds = None
-    if os.path.exists(TOKEN_FILE):
-        try:
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-            logger.info("Loaded credentials from token.json for Drive")
-        except Exception as e:
-            logger.error(f"Error loading token.json for Drive: {e}")
-            os.remove(TOKEN_FILE)
+    if "access_token" in google_tokens:
+        creds = Credentials(
+            token=google_tokens["access_token"],
+            refresh_token=google_tokens.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            scopes=SCOPES
+        )
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                logger.info("Refreshed credentials for Drive")
+                save_tokens(user_id, {"google": {
+                    "access_token": creds.token,
+                    "refresh_token": creds.refresh_token,
+                    "expires_in": (creds.expiry - datetime.utcnow()).seconds if creds.expiry is not None else None
+                }})
+                logger.info(f"Refreshed Google credentials for Drive for user {user_id}")
             except Exception as e:
-                logger.error(f"Error refreshing token for Drive: {e}")
-                os.remove(TOKEN_FILE)
-                creds = None
-        if not creds:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-            logger.info("Authenticated via OAuth flow for Drive")
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
-            logger.info("Saved credentials to token.json for Drive")
+                logger.error(f"Error refreshing Google token for user {user_id}: {e}")
+                raise Exception("Failed to refresh Google token")
+        else:
+            raise Exception("Google authentication required")
     return build('drive', 'v3', credentials=creds)
 
-def get_gmail_service():
+def get_gmail_service(user_id):
     """Get authenticated Gmail service."""
+    tokens = load_tokens(user_id)
+    google_tokens = tokens.get("google", {})
     creds = None
-    if os.path.exists(TOKEN_FILE):
-        try:
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-            logger.info("Loaded credentials from token.json for Gmail")
-        except Exception as e:
-            logger.error(f"Error loading token.json for Gmail: {e}")
-            os.remove(TOKEN_FILE)
+    if "access_token" in google_tokens:
+        creds = Credentials(
+            token=google_tokens["access_token"],
+            refresh_token=google_tokens.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            scopes=SCOPES
+        )
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                logger.info("Refreshed credentials for Gmail")
+                save_tokens(user_id, {"google": {
+                    "access_token": creds.token,
+                    "refresh_token": creds.refresh_token,
+                    "expires_in": (creds.expiry - datetime.utcnow()).seconds if creds.expiry is not None else None
+                }})
+                logger.info(f"Refreshed Google credentials for Gmail for user {user_id}")
             except Exception as e:
-                logger.error(f"Error refreshing token for Gmail: {e}")
-                os.remove(TOKEN_FILE)
-                creds = None
-        if not creds:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-            logger.info("Authenticated via OAuth flow for Gmail")
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
-            logger.info("Saved credentials to token.json for Gmail")
+                logger.error(f"Error refreshing Google token for user {user_id}: {e}")
+                raise Exception("Failed to refresh Google token")
+        else:
+            raise Exception("Google authentication required")
     return build('gmail', 'v1', credentials=creds)
 
 def get_auth_url():
     """Get OAuth authorization URL."""
-    try:
-        if not os.path.exists(CREDENTIALS_FILE):
-            raise FileNotFoundError(f"{CREDENTIALS_FILE} not found")
-        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-        flow.redirect_uri = 'http://localhost:5000/oauth2callback'
-        auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
-        logger.info(f"Generated auth URL: {auth_url}")
-        return auth_url
-    except Exception as e:
-        logger.error(f"Error generating auth URL: {e}")
-        raise
-
+    # This function is no longer needed since /auth/google handles the OAuth flow
+    raise NotImplementedError("Use /auth/google endpoint for Google OAuth flow")
 
 def handle_oauth_callback(authorization_response):
-    try:
-        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-        flow.redirect_uri = 'http://localhost:5000/oauth2callback'
-        flow.fetch_token(authorization_response=authorization_response)
-        creds = flow.credentials
+    """Handle OAuth callback."""
+    # This function is no longer needed since /auth/google/callback handles the OAuth flow
+    raise NotImplementedError("Use /auth/google/callback endpoint for Google OAuth callback")
 
-        # Save to token.json
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
-
-        # 🔍 Get user email using People API or Profile API
-        service = build('oauth2', 'v2', credentials=creds)
-        user_info = service.userinfo().get().execute()
-        user_email = user_info.get("email", "unknown@example.com")
-
-        return user_email
-    except Exception as e:
-        logger.error(f"Error handling OAuth callback: {e}")
-        raise
-
-
-def create_calendar_event(event_summary):
+def create_calendar_event(event_summary, user_id):
     """Create a Google Calendar event."""
     try:
-        service = get_calendar_service()
+        service = get_calendar_service(user_id)
         event_time = datetime.now() + timedelta(days=1)
         event = {
             'summary': f'Prepare slides for {event_summary}',
@@ -160,16 +137,16 @@ def create_calendar_event(event_summary):
             'end': {'dateTime': (event_time + timedelta(hours=1)).isoformat(), 'timeZone': 'UTC'}
         }
         event_result = service.events().insert(calendarId='primary', body=event).execute()
-        logger.info(f"Created Google Calendar event: {event_result.get('htmlLink')}")
+        logger.info(f"Created Google Calendar event for user {user_id}: {event_result.get('htmlLink')}")
         return {"action": "Scheduled meeting", "details": {"event_id": event_result.get('id'), "link": event_result.get('htmlLink')}}
     except Exception as e:
-        logger.error(f"Error creating calendar event: {e}")
+        logger.error(f"Error creating calendar event for user {user_id}: {e}")
         raise
 
-def upload_to_drive(file_path, file_name):
+def upload_to_drive(file_path, file_name, user_id):
     """Upload a file to Google Drive and return a shareable link."""
     try:
-        service = get_drive_service()
+        service = get_drive_service(user_id)
         file_metadata = {
             'name': file_name,
             'mimeType': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
@@ -188,7 +165,7 @@ def upload_to_drive(file_path, file_name):
                 fields='id'
             ).execute()
         except HttpError as e:
-            logger.error(f"Failed to set sharing permissions: {e}")
+            logger.error(f"Failed to set sharing permissions for user {user_id}: {e}")
             # Fallback: Set permissions using update (sometimes more reliable)
             service.permissions().update(
                 fileId=file['id'],
@@ -196,16 +173,16 @@ def upload_to_drive(file_path, file_name):
                 body={'type': 'anyone', 'role': 'reader'},
                 fields='id'
             ).execute()
-        logger.info(f"Uploaded file to Google Drive: {file.get('webViewLink')}")
+        logger.info(f"Uploaded file to Google Drive for user {user_id}: {file.get('webViewLink')}")
         return file.get('webViewLink')
     except Exception as e:
-        logger.error(f"Error uploading file to Google Drive: {e}")
+        logger.error(f"Error uploading file to Google Drive for user {user_id}: {e}")
         raise
 
-def send_gmail(to, subject, body):
+def send_gmail(to, subject, body, user_id):
     """Send an email using the Gmail API."""
     try:
-        service = get_gmail_service()
+        service = get_gmail_service(user_id)
         message = MIMEText(body)
         message['to'] = to
         message['subject'] = subject
@@ -213,19 +190,15 @@ def send_gmail(to, subject, body):
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
         message = {'raw': raw_message}
         sent_message = service.users().messages().send(userId='me', body=message).execute()
-        logger.info(f"Sent email via Gmail API: {sent_message['id']}")
+        logger.info(f"Sent email via Gmail API for user {user_id}: {sent_message['id']}")
         return {"action": "Email sent", "details": {"message_id": sent_message['id']}}
     except Exception as e:
-        logger.error(f"Error sending email via Gmail API: {e}")
+        logger.error(f"Error sending email via Gmail API for user {user_id}: {e}")
         raise
 
 def create_calendar_event_with_zoom(topic, start_time, duration, zoom_link, user_id):
     try:
-        # Load credentials from token.json or user store
-        creds = Credentials.from_authorized_user_file("token.json")  # 🔁 Replace with DB-based loading if needed
-        service = build("calendar", "v3", credentials=creds)
-
-        # Parse start_time
+        service = get_calendar_service(user_id)
         start_dt = datetime.fromisoformat(start_time)
         end_dt = start_dt + timedelta(minutes=duration)
 
@@ -243,20 +216,19 @@ def create_calendar_event_with_zoom(topic, start_time, duration, zoom_link, user
         }
 
         created_event = service.events().insert(calendarId="primary", body=event).execute()
+        logger.info(f"Created Google Calendar event with Zoom link for user {user_id}: {created_event['htmlLink']}")
         return {
             "event_id": created_event["id"],
             "html_link": created_event["htmlLink"]
         }
-
     except Exception as e:
-        raise Exception(f"Error creating Google Calendar event: {e}")
+        logger.error(f"Error creating Google Calendar event for user {user_id}: {e}")
+        raise
 
-
-def list_calendar_events(start_date=None, end_date=None, event_type=None, attendees=None):
+def list_calendar_events(user_id, start_date=None, end_date=None, event_type=None, attendees=None):
     """List events within a date range from Google Calendar with optional filters."""
     try:
-        service = get_calendar_service()
-        # Define the time range
+        service = get_calendar_service(user_id)
         if start_date:
             start = datetime.strptime(start_date, '%Y-%m-%d').date()
         else:
@@ -264,7 +236,7 @@ def list_calendar_events(start_date=None, end_date=None, event_type=None, attend
         if end_date:
             end = datetime.strptime(end_date, '%Y-%m-%d').date()
         else:
-            end = start + timedelta(days=30)  # Default to 30 days from start date
+            end = start + timedelta(days=30)
 
         time_min = datetime.combine(start, datetime.min.time()).isoformat() + 'Z'
         time_max = datetime.combine(end, datetime.max.time()).isoformat() + 'Z'
@@ -284,13 +256,11 @@ def list_calendar_events(start_date=None, end_date=None, event_type=None, attend
             summary = event.get('summary', 'No title')
             description = event.get('description', '')
 
-            # Filter by event type (keyword in summary or description)
             if event_type:
                 event_type_lower = event_type.lower()
                 if not (summary.lower().find(event_type_lower) != -1 or (description and description.lower().find(event_type_lower) != -1)):
                     continue
 
-            # Filter by attendees
             if attendees:
                 attendee_emails = [attendee.get('email', '').lower() for attendee in event.get('attendees', [])]
                 attendees_lower = [attendee.lower() for attendee in attendees.split(',')]
@@ -304,8 +274,8 @@ def list_calendar_events(start_date=None, end_date=None, event_type=None, attend
                 "link": event.get('htmlLink', '')
             })
 
-        logger.info(f"Retrieved {len(event_list)} events from {start} to {end} with filters event_type={event_type}, attendees={attendees}")
+        logger.info(f"Retrieved {len(event_list)} events for user {user_id} from {start} to {end} with filters event_type={event_type}, attendees={attendees}")
         return event_list
-    except HttpError as e:
-        logger.error(f"Error fetching calendar events: {e}")
+    except Exception as e:
+        logger.error(f"Error fetching calendar events for user {user_id}: {e}")
         raise

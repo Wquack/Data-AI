@@ -6,6 +6,6 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)  # type: ignore
+    email = Column(String, unique=True, index=True, nullable=False)  # type: ignore
+    password_hash = Column(String, nullable=False)  # type: ignore

@@ -2,7 +2,7 @@ import sys
 import requests
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Request, HTTPException, status, Depends , Body
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 from utils.db import SessionLocal
 from models.user import User
 from passlib.context import CryptContext
-from utils.jwt_utils import generate_state_token, decode_state_token, create_access_token
+from utils.jwt_utils import generate_state_token, decode_state_token, create_access_token , create_refresh_token
 from utils.token_store import save_tokens, load_tokens
 from jose import JWTError
 import logging
+from models.user import User
 
 router = APIRouter()
 
@@ -56,6 +57,7 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
 
     return {"message": "User registered successfully", "user_id": new_user.id}
 
+# auth_routes.py
 @router.post("/auth/login")
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == request.email).first()
@@ -63,10 +65,17 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     access_token = create_access_token({"user_id": user.id})
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token = create_refresh_token({"user_id": user.id})
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
 
 # Middleware to get the current user from the token
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+# auth_routes.py  # Ensure this import is present
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     try:
         payload = decode_state_token(token)
         user_id = payload if isinstance(payload, str) else payload.get("user_id")
@@ -83,12 +92,32 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 def get_logged_in_user(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "email": current_user.email}
 
+@router.post("/auth/refresh")
+async def refresh_token(refresh_token: str = Body(...)):
+    try:
+        payload = decode_state_token(refresh_token)
+        user_id = payload if isinstance(payload, str) else payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+        
+        # Optionally, verify user still exists
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        new_access_token = create_access_token({"user_id": user_id})
+        return {
+            "access_token": new_access_token,
+            "token_type": "bearer"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid or expired refresh token: {str(e)}")
 
 #GOOGLE MEET AUTH
 
 @router.get("/auth/google_meet")
 def auth_google_meet(current_user: User = Depends(get_current_user)):
-    state_token = generate_state_token(current_user.id)
+    state_token = generate_state_token(str(current_user.id))
     auth_url = (
         f"https://accounts.google.com/o/oauth2/v2/auth?"
         f"client_id={os.getenv('GOOGLE_CLIENT_ID')}&"
@@ -168,10 +197,13 @@ def zoom_callback(request: Request, db: Session = Depends(get_db)):
     }
 
     res = requests.post(token_url, headers=headers, data=payload)
+    logger.info("Exchanging token for Zoom for user_id: %s", user_id)
     if res.status_code != 200:
+        logger.error("Zoom token response: %s", res.text)
         raise HTTPException(status_code=500, detail="Zoom token exchange failed")
 
     token_data = res.json()
+    logger.info("Zoom token data: %s", token_data)
     save_tokens(user_id, {"zoom": token_data})
     return {"message": "Zoom authorized successfully", "details": token_data}
 
@@ -206,10 +238,13 @@ def slack_callback(request: Request, db: Session = Depends(get_db)):
     }
 
     res = requests.post(token_url, data=payload)
+    logger.info("Exchanging token for Slack for user_id: %s", user_id)
     if res.status_code != 200 or not res.json().get("ok"):
+        logger.error("Slack token response: %s", res.text)
         raise HTTPException(status_code=500, detail="Slack token exchange failed")
 
     token_data = res.json()
+    logger.info("Slack token data: %s", token_data)
     save_tokens(user_id, {"slack": token_data})
     return {"message": "Slack authorized successfully", "details": token_data}
 
@@ -251,18 +286,21 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     res = requests.post(token_url, data=payload, headers=headers)
+    logger.info("Exchanging token for Google for user_id: %s", user_id)
 
     if res.status_code != 200:
+        logger.error("Google token response: %s", res.text)
         raise HTTPException(status_code=500, detail="Google token exchange failed")
 
     token_data = res.json()
+    logger.info("Google token data: %s", token_data)
     save_tokens(user_id, {"google": token_data})
 
     return {"message": "Google authorized successfully", "details": token_data}
 
 @router.get("/auth/notion")
 def auth_notion(current_user: User = Depends(get_current_user)):
-    state_token = generate_state_token(current_user.id)
+    state_token = generate_state_token(str(current_user.id))
     notion_auth_url = (
         f"https://api.notion.com/v1/oauth/authorize?"
         f"owner=user&client_id={os.getenv('NOTION_CLIENT_ID')}&"
@@ -306,7 +344,14 @@ def notion_callback(request: Request, db: Session = Depends(get_db)):
 # ✅ Phase IV: Token viewer
 @router.get("/auth/tokens")
 def view_tokens(current_user: User = Depends(get_current_user)):
-    token_data = load_tokens(current_user.id)
-    if not token_data:
-        raise HTTPException(status_code=404, detail="No tokens found for current user")
-    return {"tokens": token_data}
+    tokens = load_tokens(str(current_user.id))
+    if not tokens:
+        raise HTTPException(status_code=404, detail="No tokens found")
+    # Mask refresh/access tokens
+    for provider in tokens:
+        token = tokens[provider]
+        if "access_token" in token:
+            token["access_token"] = "****" + token["access_token"][-4:]
+        if "refresh_token" in token:
+            token["refresh_token"] = "****" + token["refresh_token"][-4:]
+    return {"tokens": tokens}
