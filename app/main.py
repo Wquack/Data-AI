@@ -2,6 +2,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.routes import router as app_routes
 from auth.auth_routes import router as auth_routes
 from utils.db import Base, engine, SessionLocal
@@ -19,6 +20,7 @@ engine = create_engine(DATABASE_URL)
 
 Base.metadata.create_all(bind=engine)
 
+# --- DB Dependency ---
 def get_db():
     db = SessionLocal()
     try:
