@@ -115,7 +115,7 @@ async def chat_endpoint_logic(request: Request, user_id: str):
             raise HTTPException(status_code=400, detail='Message must be a non-empty string')
 
         logger.info(f"Received user message for user {user_id}: {message}")
-        result = await process_user_message(message, user_id)  # Ensure process_user_message is awaited
+        result = await process_user_message(message, user_id)
         logger.info(f"Chat endpoint response for user {user_id}: {json.dumps(result, indent=2)}")
 
         if result:
@@ -130,26 +130,13 @@ async def chat_endpoint_logic(request: Request, user_id: str):
                 greeting = "Good night!"
             result["response"] = f"{greeting} {result['response']}"
 
-            productivity_tips = (
-                "\n\nTo improve your productivity, consider using the following strategies:\n\n"
-                "- Prioritize your tasks: Use the Eisenhower Matrix to categorize tasks based on their urgency and importance.\n"
-                "- Use reminders: Set up reminders for important tasks in Google Calendar or your preferred productivity app.\n"
-                "- Batch similar tasks: Group similar tasks together to increase efficiency and reduce context switching.\n"
-                "- Take breaks: Regular short breaks can help maintain focus and boost productivity. Try the Pomodoro Technique for focused work sessions followed by short breaks.\n"
-                "- Limit distractions: Use tools like Freedom or Cold Turkey to block distracting websites while you work.\n"
-                "- Use collaborative tools: Utilize Slack or Microsoft Teams for real-time communication and collaboration with your team members.\n\n"
-                "Stay productive and have a great day!"
-            )
-            result["response"] = f"{result['response']}{productivity_tips}"
-
         return result
     except Exception as e:
-        # Log the error with the user_id, which is now guaranteed to be defined
         logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         if "google authentication required" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
-
+    
 @router.post('/chat_with_mistral')
 async def chat_with_mistral_endpoint(request: Request, current_user: User = Depends(get_current_user)):
     return await chat_with_mistral_endpoint_logic(request, str(current_user.id))

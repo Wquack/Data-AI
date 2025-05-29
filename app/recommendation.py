@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 
 notion_pages_cache = TTLCache(maxsize=100, ttl=300)
 
+# Define positive and negative keywords for sentiment detection
+POSITIVE_KEYWORDS = ["good", "great", "fantastic", "amazing", "success", "achieve", "milestone", "celebrate", "happy", "awesome", "excellent", "wonderful"]
+NEGATIVE_KEYWORDS = ["bad", "terrible", "fail", "overwhelm", "stress", "problem", "issue", "difficult", "sad", "frustrate", "struggle", "delay"]
+
 async def fetch_calendar_events(start_date=None, end_date=None, user_id=None, timeout=10):
     try:
         url = "http://localhost:5000/list_calendar_events"
@@ -165,9 +169,9 @@ def generate_action_suggestions(message, mistral_response=""):
     return suggestions
 
 def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""):
-    suggestions = []
     message_lower = message.lower()
     mistral_lower = mistral_response.lower()
+    suggestions = []
 
     if sentiment == "positive":
         if 'celebrate' in message_lower or 'milestone' in message_lower or 'success' in mistral_lower:
@@ -235,8 +239,64 @@ def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""
 
     return suggestions
 
+def detect_sentiment(message, mistral_response=""):
+    message_lower = message.lower()
+    mistral_lower = mistral_response.lower()
+
+    # Check for explicit "positive" or "negative" in the Mistral response
+    if "positive" in mistral_lower:
+        return "positive"
+    if "negative" in mistral_lower:
+        return "negative"
+
+    # Keyword-based sentiment detection
+    positive_score = sum(1 for keyword in POSITIVE_KEYWORDS if keyword in message_lower or keyword in mistral_lower)
+    negative_score = sum(1 for keyword in NEGATIVE_KEYWORDS if keyword in message_lower or keyword in mistral_lower)
+
+    if positive_score > negative_score:
+        return "positive"
+    elif negative_score > positive_score:
+        return "negative"
+    else:
+        # Default to positive for neutral or ambiguous cases to avoid overly pessimistic suggestions
+        return "positive"
+
+def extract_crisp_response(mistral_response, sentiment):
+    """Extract the first sentence from Mistral's response as a crisp line."""
+    try:
+        # Split the response into sentences and take the first one
+        sentences = mistral_response.split('.')
+        crisp_response = sentences[0].strip()
+        if crisp_response and not crisp_response.endswith('!'):
+            crisp_response += '!'
+        return crisp_response
+    except Exception as e:
+        logger.error(f"Error extracting crisp response: {str(e)}\n{traceback.format_exc()}")
+        # Fallback crisp response based on sentiment
+        if sentiment == "positive":
+            return "Congratulations on your achievement!"
+        else:
+            return "Sorry to hear you're facing challenges!"
+
+def generate_contextual_response(suggestions, sentiment):
+    """Generate a contextual follow-up based on the sentiment and suggestions."""
+    if not suggestions:
+        return "Consider planning your next steps to stay on track."
+
+    # Use the first suggestion to craft a contextual response
+    primary_suggestion = suggestions[0]
+    action = primary_suggestion["action"]
+    service = primary_suggestion["service"]
+    description = primary_suggestion["description"]
+
+    if sentiment == "positive":
+        return f"To celebrate, try to {action.lower()} using {service}."
+    else:
+        return f"To manage this, try to {action.lower()} using {service}."
+
 async def chat_with_mistral(message, user_id):
     # Define default values for variables used in all paths
+    response = None
     mistral_response = "I couldn't process the request due to an error."
     suggestions = []
     notion_pages = []
@@ -262,6 +322,7 @@ async def chat_with_mistral(message, user_id):
         except Exception as e:
             logger.error(f"Error creating Mistral API task for user {user_id}: {str(e)}\n{traceback.format_exc()}")
             mistral_task = asyncio.create_task(asyncio.sleep(0))
+            mistral_response = "Failed to initiate Mistral API request."
 
         try:
             notion_task = asyncio.create_task(fetch_notion_pages(user_id=user_id)) if any(s["service"] == "notion" for s in suggestions) else asyncio.ensure_future(asyncio.sleep(0))
@@ -283,30 +344,29 @@ async def chat_with_mistral(message, user_id):
         else:
             try:
                 if response is None:
-                    raise ValueError("Mistral API response is None")
-                mistral_response = response["choices"][0]["message"]["content"] 
-                if not isinstance(mistral_response, str):
-                    logger.error(f"Mistral response content is not a string for user {user_id}: {mistral_response}")
-                    mistral_response = "I couldn't process the response from the assistant."
-            except (KeyError, TypeError, IndexError, ValueError) as e:
+                    logger.error(f"Mistral API response is None for user {user_id}")
+                    mistral_response = "Mistral API returned no response."
+                else:
+                    mistral_response = response["choices"][0]["message"]["content"]
+                    if not isinstance(mistral_response, str):
+                        logger.error(f"Mistral response content is not a string for user {user_id}: {mistral_response}")
+                        mistral_response = "I couldn't process the response from the assistant."
+            except (KeyError, TypeError, IndexError) as e:
                 logger.error(f"Error parsing Mistral API response for user {user_id}: {str(e)}\n{traceback.format_exc()}")
                 mistral_response = "I couldn't process the response from the assistant."
 
         end_time = asyncio.get_event_loop().time()
         logger.info(f"chat_with_mistral parallel tasks completed in {end_time - start_time:.2f} seconds for user {user_id}")
 
-        sentiment = "positive" if "positive" in mistral_response.lower() else "negative"
+        # Detect sentiment using both message and Mistral response
+        sentiment = detect_sentiment(message, mistral_response)
         confidence = 0.9
 
-        # Refine suggestions with sentiment and Mistral response
+        # Generate or refine suggestions based on sentiment
         try:
-            refined_suggestions = generate_sentiment_based_suggestions(message, sentiment, mistral_response)
-            if refined_suggestions:
-                suggestions = refined_suggestions
-            else:
-                suggestions = generate_action_suggestions(message, mistral_response)
+            suggestions = generate_sentiment_based_suggestions(message, sentiment, mistral_response)
         except Exception as e:
-            logger.error(f"Error refining suggestions for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+            logger.error(f"Error generating sentiment-based suggestions for user {user_id}: {str(e)}\n{traceback.format_exc()}")
 
         # If suggestions changed and we need Notion pages but haven't fetched them yet
         if any(s["service"] == "notion" for s in suggestions) and not isinstance(notion_task, asyncio.Future):
@@ -322,11 +382,20 @@ async def chat_with_mistral(message, user_id):
             notion_pages = []
         notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
 
+        # Extract a one-line crisp response
+        crisp_response = extract_crisp_response(mistral_response, sentiment)
+
+        # Generate a contextual follow-up based on suggestions
+        contextual_response = generate_contextual_response(suggestions, sentiment)
+
+        # Combine the crisp response and contextual response
+        final_response = f"{crisp_response} {contextual_response}"
+
         return {
             "message": message,
             "sentiment": sentiment,
             "confidence": confidence,
-            "response": mistral_response,
+            "response": final_response,
             "suggestions": suggestions,
             "notion_pages": notion_page_options
         }
@@ -346,11 +415,30 @@ async def chat_with_mistral(message, user_id):
             notion_pages = []
         notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
 
+        # Detect sentiment for fallback response
+        sentiment = detect_sentiment(message)
+        confidence = 0.9
+
+        # Generate fallback suggestions based on sentiment
+        try:
+            suggestions = generate_sentiment_based_suggestions(message, sentiment)
+        except Exception as e:
+            logger.error(f"Error generating sentiment-based suggestions in fallback for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+
+        # Extract a one-line crisp response
+        crisp_response = extract_crisp_response("Sorry, I couldn't process your request right now.", sentiment)
+
+        # Generate a contextual follow-up based on suggestions
+        contextual_response = generate_contextual_response(suggestions, sentiment)
+
+        # Combine the crisp response and contextual response
+        final_response = f"{crisp_response} {contextual_response}"
+
         return {
             "message": message,
-            "sentiment": "unknown",
-            "confidence": 0.0,
-            "response": "Sorry, I couldn't process your request right now. Let's plan your next steps instead.",
+            "sentiment": sentiment,
+            "confidence": confidence,
+            "response": final_response,
             "suggestions": suggestions,
             "notion_pages": notion_page_options
         }
