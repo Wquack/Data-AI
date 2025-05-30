@@ -118,19 +118,7 @@ async def chat_endpoint_logic(request: Request, user_id: str):
         result = await process_user_message(message, user_id)
         logger.info(f"Chat endpoint response for user {user_id}: {json.dumps(result, indent=2)}")
 
-        if result:
-            current_hour = datetime.now().hour
-            if 5 <= current_hour < 12:
-                greeting = "Good morning!"
-            elif 12 <= current_hour < 17:
-                greeting = "Good afternoon!"
-            elif 17 <= current_hour < 22:
-                greeting = "Good evening!"
-            else:
-                greeting = "Good night!"
-            result["response"] = f"{greeting} {result['response']}"
-
-        return result
+        return result  # Return the result directly without adding a greeting
     except Exception as e:
         logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         if "google authentication required" in str(e).lower():

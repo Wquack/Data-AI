@@ -2,6 +2,9 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from fastapi import FastAPI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 tags_metadata = [
     {
