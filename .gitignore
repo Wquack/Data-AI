@@ -6,4 +6,5 @@ tokens.json
 *.pem
 *.key
 *.env
+**/__pycache__
 

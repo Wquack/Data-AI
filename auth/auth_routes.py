@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from utils.db import SessionLocal
 from models.user import User
 from passlib.context import CryptContext
-from utils.jwt_utils import generate_state_token, decode_state_token, create_access_token, create_refresh_token
+from utils.jwt_utils import generate_state_token, decode_state_token, create_access_token, create_refresh_token, decode_access_token
 from utils.token_store import save_tokens, load_tokens
 from jose import JWTError
 import logging
@@ -88,7 +88,8 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     try:
-        payload = decode_state_token(token)
+        logger.info(f"Token received in header: {token}")
+        payload = decode_access_token(token)  # ✅ use decode_access_token, not decode_state_token
         user_id = payload.get("user_id")
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
@@ -96,13 +97,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         user = db.query(User).filter(User.id == int(user_id)).first()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         return user
-    except JWTError as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
-    
     except Exception as e:
-        logger.error(f"Error decoding token: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid or expired token: {str(e)}")
+        logger.error(f"Token decode error: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+
 @router.get("/auth/me")
 def get_logged_in_user(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "email": current_user.email, "username": current_user.username}
