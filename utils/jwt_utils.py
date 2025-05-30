@@ -1,5 +1,5 @@
 import jwt
-from jose import JWTError  # Import JWTError for specific error handling
+from jwt import InvalidTokenError  # Updated import for PyJWT  # Import JWTError for specific error handling
 from datetime import datetime, timedelta, timezone
 import os
 import logging
@@ -79,6 +79,6 @@ def decode_state_token(token: str) -> str:  # Changed from Optional[str] to str
         if not user_id:
             raise ValueError("State token payload missing 'data' or 'user_id'")
         return str(user_id)  # Ensure the user_id is a string
-    except Exception as e:
+    except InvalidTokenError as e:
         logger.error(f"Failed to decode state token: {str(e)}")
         raise Exception(f"Invalid state token: {str(e)}")

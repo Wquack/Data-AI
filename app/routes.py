@@ -25,6 +25,8 @@ from .zoom_oauth import get_zoom_auth_url, handle_zoom_callback, refresh_zoom_to
 from .notion_api import create_notion_page, list_notion_pages
 from .powerpoint_api import create_powerpoint_slides
 import requests
+import re
+from typing import Dict, List, Any, Optional
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -36,9 +38,273 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
 class ChatMessage(BaseModel):
     message: str
+    context: Optional[str] = None  # Optional conversation context
+
+class Suggestion(BaseModel):
+    action: str
+    service: str
+    description: str
+    priority: int  # 1-5, where 5 is highest priority
+
+class ChatResponse(BaseModel):
+    message: str
+    intent: str
+    confidence: float
+    response: str
+    suggestions: List[Suggestion]
+    follow_up_questions: List[str]
+    notion_pages: List[Dict[str, Any]]
+
+
+def get_user_services_context(user_tokens: Dict) -> Dict[str, bool]:
+    """Get available services for the user"""
+    return {
+        "google_calendar": "google" in user_tokens and "access_token" in user_tokens.get("google", {}),
+        "gmail": "google" in user_tokens and "access_token" in user_tokens.get("google", {}),
+        "slack": "slack" in user_tokens and "access_token" in user_tokens.get("slack", {}),
+        "zoom": "zoom" in user_tokens and "access_token" in user_tokens.get("zoom", {}),
+        "notion": "notion" in user_tokens and "access_token" in user_tokens.get("notion", {})
+    }
+
+def analyze_user_intent(message: str) -> Dict[str, Any]:
+    """Enhanced intent detection using keywords and patterns"""
+    message_lower = message.lower()
+    
+    # Define intent patterns with confidence scores
+    intent_patterns = {
+        "schedule_meeting": {
+            "keywords": ["schedule", "meeting", "event", "appointment", "calendar", "book", "arrange"],
+            "patterns": [r"schedule.*meeting", r"book.*appointment", r"arrange.*call"],
+            "confidence_base": 0.8
+        },
+        "send_email": {
+            "keywords": ["email", "send", "message", "notify", "inform"],
+            "patterns": [r"send.*email", r"email.*about", r"notify.*team"],
+            "confidence_base": 0.7
+        },
+        "create_document": {
+            "keywords": ["create", "document", "note", "write", "draft"],
+            "patterns": [r"create.*document", r"write.*note", r"draft.*proposal"],
+            "confidence_base": 0.7
+        },
+        "search_information": {
+            "keywords": ["find", "search", "look", "information", "data"],
+            "patterns": [r"find.*information", r"search.*for", r"look.*up"],
+            "confidence_base": 0.6
+        },
+        "status_update": {
+            "keywords": ["status", "update", "progress", "report"],
+            "patterns": [r"status.*update", r"progress.*report", r"how.*going"],
+            "confidence_base": 0.6
+        },
+        "general_question": {
+            "keywords": ["help", "how", "what", "why", "when", "where"],
+            "patterns": [r"how.*do", r"what.*is", r"help.*with"],
+            "confidence_base": 0.5
+        }
+    }
+    
+    best_intent = "general_question"
+    best_confidence = 0.3
+    
+    for intent, config in intent_patterns.items():
+        confidence = 0
+        
+        # Check keywords
+        keyword_matches = sum(1 for keyword in config["keywords"] if keyword in message_lower)
+        confidence += (keyword_matches / len(config["keywords"])) * config["confidence_base"]
+        
+        # Check patterns
+        pattern_matches = sum(1 for pattern in config["patterns"] if re.search(pattern, message_lower))
+        if pattern_matches > 0:
+            confidence += 0.2
+        
+        if confidence > best_confidence:
+            best_intent = intent
+            best_confidence = confidence
+    
+    return {
+        "intent": best_intent,
+        "confidence": min(best_confidence, 1.0)
+    }
+
+def generate_intelligent_response(message: str, intent: str, services: Dict[str, bool]) -> str:
+    """Generate contextual response using Mistral with better prompting"""
+    
+    available_services = [service for service, available in services.items() if available]
+    services_text = ", ".join(available_services) if available_services else "none"
+    
+    # Create a more sophisticated prompt
+    system_prompt = f"""You are an intelligent assistant that helps users manage their productivity across various platforms. 
+    
+Available services for this user: {services_text}
+Detected intent: {intent}
+
+Provide a helpful, specific response that:
+1. Directly addresses their request
+2. Suggests actionable next steps using their available services
+3. Is concise but informative
+4. Avoids generic positive/negative sentiment responses
+
+Focus on practical solutions and specific actions they can take."""
+
+    try:
+        # Use your existing Mistral API call but with better prompting
+        mistral_api_key = os.getenv("MISTRAL_API_KEY")
+        if not mistral_api_key:
+            return "I'm here to help you manage your tasks and productivity. What would you like to accomplish?"
+
+        headers = {
+            "Authorization": f"Bearer {mistral_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "mistral-small-latest",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 300
+        }
+        
+        response = requests.post("https://api.mistral.ai/v1/chat/completions", headers=headers, json=payload)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        else:
+            logger.error(f"Mistral API error: {response.status_code} {response.text}")
+            return "I'm here to help you manage your tasks and productivity. What would you like to accomplish?"
+    except Exception as e:
+        logger.error(f"Error calling Mistral API: {str(e)}")
+        return "I'm here to help you manage your tasks and productivity. What would you like to accomplish?"
+
+def generate_smart_suggestions(intent: str, message: str, services: Dict[str, bool]) -> List[Dict]:
+    """Generate contextual suggestions based on intent and available services"""
+    suggestions = []
+    
+    if intent == "schedule_meeting" and services.get("google_calendar"):
+        suggestions.append({
+            "action": "Create calendar event",
+            "service": "google_calendar",
+            "description": "Schedule this meeting on your Google Calendar",
+            "priority": 5
+        })
+        if services.get("gmail"):
+            suggestions.append({
+                "action": "Send meeting invite",
+                "service": "gmail",
+                "description": "Send email invitations to participants",
+                "priority": 4
+            })
+        if services.get("zoom"):
+            suggestions.append({
+                "action": "Create Zoom meeting",
+                "service": "zoom",
+                "description": "Generate Zoom link for the meeting",
+                "priority": 4
+            })
+    
+    elif intent == "send_email" and services.get("gmail"):
+        suggestions.append({
+            "action": "Compose email",
+            "service": "gmail",
+            "description": "Draft and send your email",
+            "priority": 5
+        })
+    
+    elif intent == "create_document" and services.get("notion"):
+        suggestions.append({
+            "action": "Create Notion page",
+            "service": "notion",
+            "description": "Start a new document in Notion",
+            "priority": 5
+        })
+    
+    elif intent == "status_update":
+        if services.get("slack"):
+            suggestions.append({
+                "action": "Post to Slack",
+                "service": "slack",
+                "description": "Share your status update with your team",
+                "priority": 4
+            })
+        if services.get("gmail"):
+            suggestions.append({
+                "action": "Send status email",
+                "service": "gmail",
+                "description": "Email a detailed status report",
+                "priority": 3
+            })
+    
+    elif intent == "search_information" and services.get("notion"):
+        suggestions.append({
+            "action": "Search Notion",
+            "service": "notion",
+            "description": "Look for relevant information in your Notion workspace",
+            "priority": 4
+        })
+    
+    # Always provide a general help suggestion if no specific actions are available
+    if not suggestions:
+        if services.get("google_calendar"):
+            suggestions.append({
+                "action": "Check calendar",
+                "service": "google_calendar",
+                "description": "Review your upcoming events and schedule",
+                "priority": 2
+            })
+        if services.get("notion"):
+            suggestions.append({
+                "action": "Browse Notion",
+                "service": "notion",
+                "description": "Explore your Notion workspace for inspiration",
+                "priority": 2
+            })
+    
+    # Sort by priority
+    suggestions.sort(key=lambda x: x["priority"], reverse=True)
+    return suggestions[:3]  # Return top 3 suggestions
+
+def generate_follow_up_questions(intent: str, message: str) -> List[str]:
+    """Generate relevant follow-up questions to continue the conversation"""
+    questions = []
+    
+    if intent == "schedule_meeting":
+        questions = [
+            "What time works best for this meeting?",
+            "Who should be invited to this meeting?",
+            "How long should the meeting be?"
+        ]
+    elif intent == "send_email":
+        questions = [
+            "Who should receive this email?",
+            "What's the main topic or subject?",
+            "Is this urgent or can it wait?"
+        ]
+    elif intent == "create_document":
+        questions = [
+            "What type of document are you creating?",
+            "What's the main purpose of this document?",
+            "Do you need to collaborate with others on this?"
+        ]
+    elif intent == "general_question":
+        questions = [
+            "What specific task would you like help with?",
+            "Are you looking to schedule something or send a message?",
+            "What's your main goal right now?"
+        ]
+    else:
+        questions = [
+            "Would you like me to help you get started?",
+            "Do you need any additional information?",
+            "Is there anything else I can assist you with?"
+        ]
+    
+    return questions[:2]  # Return up to 2 follow-up questions
+
 
 @router.get("/ping")
 def ping():
@@ -112,14 +378,48 @@ async def chat_endpoint(request: Request, current_user: User = Depends(get_curre
 
         logger.info(f"Received user message for user {user_id}: {message}")
 
-        result = await process_user_message(message, user_id=user_id)  # ✅ await here
-
-        logger.info(f"Chat endpoint response for user {user_id}: {result}")
-        return result
-
+        # Step 1: Analyze user intent
+        intent_analysis = analyze_user_intent(message)
+        
+        # Step 2: Get user's available services
+        user_tokens = load_tokens(str(user_id))
+        services = get_user_services_context(user_tokens or {})
+        
+        # Step 3: Generate intelligent response
+        response_text = generate_intelligent_response(
+            message, 
+            intent_analysis["intent"], 
+            services
+        )
+        
+        # Step 4: Generate smart suggestions
+        suggestions = generate_smart_suggestions(
+            intent_analysis["intent"], 
+            message, 
+            services
+        )
+        
+        # Step 5: Generate follow-up questions
+        follow_up_questions = generate_follow_up_questions(
+            intent_analysis["intent"], 
+            message
+        )
+        
+        logger.info(f"Chat processed for user {user_id}: intent={intent_analysis['intent']}, confidence={intent_analysis['confidence']}")
+        
+        return {
+            "message": message,
+            "intent": intent_analysis["intent"],
+            "confidence": intent_analysis["confidence"],
+            "response": response_text,
+            "suggestions": suggestions,
+            "follow_up_questions": follow_up_questions,
+            "notion_pages": []  # Keep this for compatibility
+        }
+        
     except Exception as e:
-        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error in chat processing for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="An error occurred while processing your request")
 
 
 
