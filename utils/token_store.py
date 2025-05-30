@@ -55,6 +55,24 @@ def save_tokens(user_id, token_data: dict):
         session.close()
 
 
+def remove_tokens(user_id):
+    """
+    Remove all tokens for a given user_id.
+    """
+    session: Session = SessionLocal()
+    try:
+        # Delete all tokens for the user
+        session.query(UserToken).filter(UserToken.user_id == user_id).delete()
+        session.commit()
+        logger.info(f"All tokens removed for user_id {user_id}")
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Error removing tokens for user_id {user_id}: {str(e)}")
+        raise
+    finally:
+        session.close()
+
+
 def load_tokens(user_id: str) -> dict:
     """
     Load all tokens for the user. Returns a dict by service.

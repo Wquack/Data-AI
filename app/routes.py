@@ -84,7 +84,7 @@ async def chat_endpoint_logic(request: Request):
         user_id = str(current_user.id)
 
         logger.info(f"Received user message for user {user_id}: {message}")
-        response = await call_mistral_api(message, user_id)
+        response = await call_mistral_api(message, str(user_id))
         logger.info(f"Chat endpoint response for user {user_id}: {json.dumps(response, indent=2)}")
         if response is not None:
             return {
@@ -99,11 +99,31 @@ async def chat_endpoint_logic(request: Request):
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
 
-@router.post('/chat')
+@router.post("/chat")
 async def chat_endpoint(request: Request, current_user: User = Depends(get_current_user)):
-    return await chat_endpoint_logic(request, str(current_user.id))
+    user_id = None
+    try:
+        user_id = current_user.id
+        data = await request.json()
+        message = data.get("message", "")
 
-async def chat_endpoint_logic(request: Request, user_id: str):
+        if not isinstance(message, str) or not message.strip():
+            raise HTTPException(status_code=400, detail="Invalid message")
+
+        logger.info(f"Received user message for user {user_id}: {message}")
+
+        result = await process_user_message(message, user_id=user_id)  # ✅ await here
+
+        logger.info(f"Chat endpoint response for user {user_id}: {result}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+
+async def chat_with_mistral_endpoint_logic(request: Request, user_id: str):
     try:
         data = await request.json()
         if not data:
@@ -115,16 +135,21 @@ async def chat_endpoint_logic(request: Request, user_id: str):
             raise HTTPException(status_code=400, detail='Message must be a non-empty string')
 
         logger.info(f"Received user message for user {user_id}: {message}")
-        result = await process_user_message(message, user_id)
-        logger.info(f"Chat endpoint response for user {user_id}: {json.dumps(result, indent=2)}")
-
-        return result  # Return the result directly without adding a greeting
+        response = await chat_with_mistral(message, user_id)
+        logger.info(f"Chat endpoint response for user {user_id}: {json.dumps(response, indent=2)}")
+        if response is not None:
+            return {
+                "response": response.get("response"),
+                "suggestions": response.get("suggestions", [])
+            }
+        else:
+            return {"response": None, "suggestions": []}
     except Exception as e:
         logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         if "google authentication required" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
-    
+
 @router.post('/chat_with_mistral')
 async def chat_with_mistral_endpoint(request: Request, current_user: User = Depends(get_current_user)):
     return await chat_with_mistral_endpoint_logic(request, str(current_user.id))
@@ -318,8 +343,7 @@ async def auth_zoom_callback(request: Request):
     if not code or not state_token:
         raise HTTPException(status_code=400, detail="Missing code or state token")
     try:
-        data = decode_state_token(state_token)
-        user_id = data["user_id"]
+        user_id = decode_state_token(state_token)
         tokens = handle_zoom_callback(code, user_id)
         return {"message": "Zoom authenticated", "tokens": tokens}
     except Exception as e:

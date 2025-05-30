@@ -16,6 +16,7 @@ from utils.token_store import save_tokens, load_tokens
 from jose import JWTError
 import logging
 from cachetools import TTLCache
+from utils.token_store import remove_tokens
 
 router = APIRouter()
 
@@ -77,43 +78,31 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     access_token = create_access_token({"user_id": user.id})
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token = create_refresh_token({"user_id": user.id})
+    logger.info(f"Generated access token for user {user.id}: {access_token}")
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,  # Ensure this is included
+        "token_type": "bearer"
+    }
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     try:
-        if not token:
-            logger.error("No token provided in Authorization header")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No token provided")
-
-        # Log the token for debugging
-        logger.debug(f"Received token: {token}")
-
         payload = decode_state_token(token)
-        if payload is None:
-            logger.error("Token payload is None after decoding")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: payload is None")
-
-        user_id = payload if isinstance(payload, str) else payload.get("user_id")
+        user_id = payload.get("user_id")
         if not user_id:
-            logger.error("Token payload does not contain user_id")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: missing user_id")
-
-        cache_key = f"user_{user_id}"
-        if cache_key in user_cache:
-            logger.info(f"Returning cached user for user_id {user_id}")
-            return user_cache[cache_key]
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
 
         user = db.query(User).filter(User.id == int(user_id)).first()
         if not user:
-            logger.error(f"User not found for user_id {user_id}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-        user_cache[cache_key] = user
         return user
+    except JWTError as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+    
     except Exception as e:
         logger.error(f"Error decoding token: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid or expired token: {str(e)}") 
-
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid or expired token: {str(e)}")
 @router.get("/auth/me")
 def get_logged_in_user(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "email": current_user.email, "username": current_user.username}
@@ -239,7 +228,7 @@ def slack_callback(request: Request):
 # ---- Notion OAuth ----
 @router.get("/auth/notion")
 def auth_notion(current_user: User = Depends(get_current_user)):
-    state_token = generate_state_token(current_user.id)
+    state_token = generate_state_token(str(current_user.id))
     url = generate_oauth_redirect_url("https://api.notion.com/v1/oauth/authorize", {
         "owner": "user",
         "client_id": os.getenv("NOTION_CLIENT_ID"),
@@ -279,7 +268,7 @@ def notion_callback(request: Request):
 # ✅ Phase IV: Token viewer
 @router.get("/auth/tokens")
 def view_tokens(current_user: User = Depends(get_current_user)):
-    token_data = load_tokens(current_user.id)
+    token_data = load_tokens(str(current_user.id))
     if not token_data:
         raise HTTPException(status_code=404, detail="No tokens found for current user")
     return {"tokens": token_data}
@@ -287,3 +276,52 @@ def view_tokens(current_user: User = Depends(get_current_user)):
 @router.get("/auth/verify-token")
 def verify_token(current_user: User = Depends(get_current_user)):
     return {"valid": True, "user_id": current_user.id}
+
+@router.delete("/auth/delete")
+def delete_user(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    user_id = current_user.id
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    try:
+        # Delete associated tokens
+        remove_tokens(user_id)
+
+        # Delete the user
+        db.delete(user)
+        db.commit()
+
+        logging.info(f"User {user_id} deleted successfully")
+        return {"message": "User deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error deleting user {user_id}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@router.put("/auth/change-password")
+def change_password(request: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    user_id = current_user.id
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Verify current password
+    if not pwd_context.verify(request.current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect current password")
+
+    # Hash the new password
+    hashed_password = pwd_context.hash(request.new_password)
+
+   # Update the password
+    db.query(User).filter(User.id == user_id).update({"password_hash": str(hashed_password)})
+    db.commit()
+
+    logging.info(f"Password changed successfully for user {user_id}")
+    return {"message": "Password changed successfully"}
