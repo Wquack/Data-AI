@@ -63,6 +63,12 @@ app = FastAPI(
     openapi_tags=tags_metadata
 )
 
+origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://chat.data-ai.co"
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
