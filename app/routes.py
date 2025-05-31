@@ -136,7 +136,42 @@ def generate_intelligent_response(message: str, intent: str, services: Dict[str,
     available_services = [service for service, available in services.items() if available]
     services_text = ", ".join(available_services) if available_services else "none"
     
-    system_prompt = f"""You are a productivity assistant. Respond in 1-2 sentences max.
+    # Handle general questions that don't need productivity focus
+    if intent == "general_question":
+        message_lower = message.lower()
+        
+        # Check if it's a casual/informational question that doesn't need service mentions
+        casual_keywords = ["what is", "who is", "define", "meaning", "sup", "hi", "hello", 
+                          "how are you", "thanks", "thank you", "what if", "why", "how does", 
+                          "explain", "tell me about"]
+        
+        is_casual = any(keyword in message_lower for keyword in casual_keywords)
+        
+        if is_casual:
+            system_prompt = """You are a helpful, friendly assistant. Answer the question naturally and conversationally. 
+            
+Provide a brief, informative response that:
+1. Directly answers their question
+2. Is conversational and natural
+3. Keep it under 50 words
+4. Don't mention productivity tools or connected services unless specifically asked
+
+Be helpful and engaging."""
+        else:
+            # For productivity-related general questions
+            system_prompt = f"""You are a productivity assistant. Respond in 1-2 sentences max.
+
+Available services: {services_text}
+
+Provide a brief, helpful response that:
+1. Acknowledges what they want to do
+2. Suggests using available services if relevant
+3. Keep it under 30 words
+
+Be direct and actionable."""
+    else:
+        # For specific productivity intents
+        system_prompt = f"""You are a productivity assistant. Respond in 1-2 sentences max.
 
 Available services: {services_text}
 User intent: {intent}
@@ -151,12 +186,21 @@ Be direct and actionable."""
     try:
         mistral_api_key = os.getenv("MISTRAL_API_KEY")
         if not mistral_api_key:
+            # Fallback responses based on intent
             if intent == "schedule_meeting":
                 return "I can help you schedule that meeting! Let me suggest some quick actions."
             elif intent == "send_email":
                 return "I can help you draft and send that email!"
             elif intent == "create_document":
                 return "Let's create that document for you!"
+            elif intent == "general_question":
+                message_lower = message.lower()
+                if any(keyword in message_lower for keyword in ["sup", "hi", "hello"]):
+                    return "Hey there! How can I help you today?"
+                elif "what is" in message_lower or "what are" in message_lower:
+                    return "I'd be happy to help answer that question!"
+                else:
+                    return "I'm here to help! What would you like to know or accomplish?"
             else:
                 return "I'm here to help you be more productive!"
 
@@ -180,14 +224,23 @@ Be direct and actionable."""
             return response.json()["choices"][0]["message"]["content"]
         else:
             logger.error(f"Mistral API error: {response.status_code} {response.text}")
+            # Fallback based on intent
             if intent == "schedule_meeting":
                 return "I can help you schedule that meeting! Let me suggest some actions."
+            elif intent == "general_question":
+                return "I'm happy to help! What would you like to know?"
             return "I'm here to help you be more productive!"
             
     except Exception as e:
         logger.error(f"Error calling Mistral API: {str(e)}")
+        # Fallback based on intent
         if intent == "schedule_meeting":
             return "I can help you schedule that meeting!"
+        elif intent == "general_question":
+            message_lower = message.lower()
+            if any(keyword in message_lower for keyword in ["sup", "hi", "hello"]):
+                return "Hey there! How can I help you today?"
+            return "I'm happy to help! What would you like to know?"
         return "I'm here to help you be productive!"
 
 def generate_smart_suggestions(intent: str, message: str, services: Dict[str, bool]) -> List[Dict]:
