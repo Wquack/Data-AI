@@ -210,7 +210,7 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
 
     save_tokens(user_id, {"google": res.json()})
     logger.info(f"Successfully stored Google tokens for user {user_id}")
-    return RedirectResponse(url="http://localhost:5173/connect?google=success")
+    return RedirectResponse(url="http://chat.data-ai.co/connect?google=success")
 
 
 # ---- Zoom OAuth ----
@@ -265,7 +265,7 @@ def zoom_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Zoom token exchange failed")
 
     save_tokens(user_id, {"zoom": res.json()})
-    return {"message": "Zoom authorized successfully"}
+    return RedirectResponse(url="http://chat.data-ai.co/connect?zoom=success")
 
 # ---- Slack OAuth ----
 @router.get("/auth/slack")
@@ -313,7 +313,7 @@ def slack_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Slack token exchange failed")
 
     save_tokens(user_id, {"slack": res.json()})
-    return {"message": "Slack authorized successfully"}
+    return RedirectResponse(url="http://chat.data-ai.co/connect?slack=success")
 
 # ---- Notion OAuth ----
 @router.get("/auth/notion")
@@ -368,7 +368,7 @@ def notion_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Notion token exchange failed")
 
     save_tokens(user_id, {"notion": res.json()})
-    return {"message": "Notion authorized successfully"}
+    return RedirectResponse(url="http://chat.data-ai.co/connect?notion=success")
 
 # ---- Token Viewer ----
 @router.get("/auth/tokens")
