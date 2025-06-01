@@ -218,6 +218,8 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
 def auth_zoom(current_user: User = Depends(get_current_user)):
     client_id = os.getenv("ZOOM_CLIENT_ID")
     redirect_uri = os.getenv("ZOOM_REDIRECT_URI")
+    logger.info(f"Zoom client id {client_id}")
+    logger.info(f"Zoom uri {redirect_uri}")
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="ZOOM_CLIENT_ID or ZOOM_REDIRECT_URI not configured in environment variables")
 
