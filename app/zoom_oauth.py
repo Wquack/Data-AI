@@ -7,7 +7,7 @@ load_dotenv()
 
 ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID")
 ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET")
-ZOOM_REDIRECT_URI = "http://backend.chat-ai.co/auth/zoom/callback"
+ZOOM_REDIRECT_URI = "https://backend.chat-ai.co/auth/zoom/callback"
 
 def get_zoom_auth_url():
     return (
