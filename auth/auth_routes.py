@@ -210,7 +210,8 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
 
     save_tokens(user_id, {"google": res.json()})
     logger.info(f"Successfully stored Google tokens for user {user_id}")
-    return {"message": "Google authorized successfully"}
+    return RedirectResponse(url="http://localhost:5173/connect?google=success")
+
 
 # ---- Zoom OAuth ----
 @router.get("/auth/zoom")

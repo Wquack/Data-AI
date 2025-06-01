@@ -12,8 +12,7 @@ load_dotenv()
 
 SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
 SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
-SLACK_REDIRECT_URI = "http://localhost:5000/auth/slack/callback"
-
+SLACK_REDIRECT_URI = "http://localhost:8000/auth/slack/callback"
 def get_slack_auth_url():
     return (
         f"https://slack.com/oauth/v2/authorize"
