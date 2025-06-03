@@ -5,14 +5,14 @@ import requests
 from dotenv import load_dotenv
 from utils.token_store import save_tokens, load_tokens  # ✅ Import both functions
 
-# TEMP: remove once user_id is dynamically resolved from session or Google profile
-DUMMY_USER_ID = "shrey@gmail.com"
+# # TEMP: remove once user_id is dynamically resolved from session or Google profile
+# DUMMY_USER_ID = "shrey@gmail.com"
 
 load_dotenv()
 
 SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
 SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
-SLACK_REDIRECT_URI = "http://localhost:8000/auth/slack/callback"
+SLACK_REDIRECT_URI = "https://backend.chat-ai.co/auth/slack/callback"
 def get_slack_auth_url():
     return (
         f"https://slack.com/oauth/v2/authorize"

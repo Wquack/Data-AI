@@ -537,12 +537,35 @@ async def create_zoom_meeting(request: Request, current_user: User = Depends(get
 @router.get('/list_notion_pages')
 async def list_notion_pages_endpoint(current_user: User = Depends(get_current_user)):
     try:
-        pages = list_notion_pages(str(current_user.id))
+        user_id = str(current_user.id)
+        pages = list_notion_pages(user_id)  # Pass user_id
         return {'pages': pages}
     except Exception as e:
         logger.error(f"Error listing Notion pages: {str(e)}")
-        if "notion token not found" in str(e).lower():
-            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/notion"})
+        if "notion not connected" in str(e).lower() or "notion access token not found" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:8000')}/auth/notion"
+            })
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@router.get('/search_notion_pages')
+async def search_notion_pages_endpoint(
+    query: str, 
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        user_id = str(current_user.id)
+        pages = search_notion_pages(user_id, query)
+        return {'pages': pages}
+    except Exception as e:
+        logger.error(f"Error searching Notion pages: {str(e)}")
+        if "notion not connected" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:8000')}/auth/notion"
+            })
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get('/list_notion_tasks')
@@ -628,8 +651,20 @@ def execute_task_endpoint(
     tokens = load_tokens(user_id)
 
     try:
-        if action == "Write important notes in Notion":
-            result = create_notion_page(event_summary, parent_page_id, user_id)
+        # Updated Notion section with improved handling
+        if action in ["Write important notes in Notion", "Create Notion page"]:
+            if not tokens.get("notion"):
+                raise HTTPException(status_code=401, detail="Notion not connected. Please authenticate via /auth/notion.")
+            
+            # Get parent page ID from request or use user's first available page
+            selected_page_id = body.get("parent_page_id")
+            result = create_notion_page(
+                event_summary=event_summary,
+                parent_page_id=selected_page_id,
+                user_id=user_id,
+                extra_text=body.get("extra_text"),
+                drive_link=body.get("drive_link")
+            )
             return {"message": "Notion page created", "notion": result}
 
         elif action == "Setup full Zoom meeting" or action == "Create a Zoom Meeting":
@@ -662,6 +697,7 @@ def execute_task_endpoint(
 
         else:
             return {"message": f"No handler implemented for action '{action}'"}
+            
     except Exception as e:
         logger.error(f"Error executing task: {str(e)}")
         if "google authentication required" in str(e).lower():

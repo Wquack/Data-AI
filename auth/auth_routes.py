@@ -349,14 +349,16 @@ def notion_callback(request: Request, db: Session = Depends(get_db)):
     client_id = os.getenv("NOTION_CLIENT_ID")
     client_secret = os.getenv("NOTION_CLIENT_SECRET")
     redirect_uri = os.getenv("NOTION_REDIRECT_URI")
+    
     if not client_id or not client_secret or not redirect_uri:
-        raise HTTPException(status_code=500, detail="NOTION_CLIENT_ID, NOTION_CLIENT_SECRET, or NOTION_REDIRECT_URI not configured in environment variables")
+        raise HTTPException(status_code=500, detail="NOTION_CLIENT_ID, NOTION_CLIENT_SECRET, or NOTION_REDIRECT_URI not configured")
 
     auth_str = f"{client_id}:{client_secret}"
     auth_b64 = base64.b64encode(auth_str.encode()).decode()
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Basic {auth_b64}"
+        "Authorization": f"Basic {auth_b64}",
+        "Notion-Version": "2022-06-28"
     }
 
     res = requests.post("https://api.notion.com/v1/oauth/token", headers=headers, json={
@@ -369,9 +371,19 @@ def notion_callback(request: Request, db: Session = Depends(get_db)):
         logger.error(f"Notion token response: {res.status_code} {res.text}")
         raise HTTPException(status_code=500, detail="Notion token exchange failed")
 
-    save_tokens(user_id, {"notion": res.json()})
-    return RedirectResponse(url="http://chat.data-ai.co/connect?notion=success")
-
+    token_data = res.json()
+    
+    # Store the complete token response
+    save_tokens(user_id, {"notion": token_data})
+    
+    logger.info(f"Successfully stored Notion tokens for user {user_id}")
+    logger.info(f"User has access to workspace: {token_data.get('workspace_name', 'Unknown')}")
+    
+    return {
+        "message": "Notion authorized successfully",
+        "workspace_name": token_data.get("workspace_name"),
+        "workspace_id": token_data.get("workspace_id")
+    }
 # ---- Token Viewer ----
 @router.get("/auth/tokens")
 def view_tokens(current_user: User = Depends(get_current_user)):
