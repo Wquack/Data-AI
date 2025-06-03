@@ -16,7 +16,7 @@ NEGATIVE_KEYWORDS = ["bad", "terrible", "fail", "overwhelm", "stress", "problem"
 
 async def fetch_calendar_events(start_date=None, end_date=None, user_id=None, timeout=10):
     try:
-        url = "http://localhost:5000/list_calendar_events"
+        url = "https://backend.data-ai.co/list_calendar_events"
         params = {}
         if start_date:
             params["start_date"] = start_date
@@ -33,7 +33,7 @@ async def fetch_calendar_events(start_date=None, end_date=None, user_id=None, ti
                 return events.get("events", [])
     except aiohttp.ClientResponseError as e:
         if e.status == 401 and 'action' in e.message and 'Requires authentication' in e.message:
-            return {"requires_auth": True, "auth_url": e.message.get("auth_url", "http://localhost:5000/auth/google")}
+            return {"requires_auth": True, "auth_url": e.message.get("auth_url", "https://backend.data-ai.co/auth/google")}
         logger.error(f"HTTP error fetching calendar events for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         raise Exception(f"Failed to fetch calendar events: HTTP error {str(e)}")
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
@@ -52,7 +52,7 @@ async def fetch_notion_pages(user_id=None, timeout=10):
     try:
         async with aiohttp.ClientSession() as session:
             start_time = asyncio.get_event_loop().time()
-            async with session.get("http://localhost:5000/list_notion_pages", timeout=timeout) as response:
+            async with session.get("https://backend.data-ai.co/list_notion_pages", timeout=timeout) as response:
                 response.raise_for_status()
                 pages = await response.json()
                 pages = pages.get("pages", [])
@@ -68,7 +68,7 @@ async def fetch_notion_tasks(user_id=None, timeout=10):
     try:
         async with aiohttp.ClientSession() as session:
             start_time = asyncio.get_event_loop().time()
-            async with session.get("http://localhost:5000/list_notion_tasks", timeout=timeout) as response:
+            async with session.get("https://backend.data-ai.co/list_notion_tasks", timeout=timeout) as response:
                 response.raise_for_status()
                 tasks = await response.json()
                 tasks = tasks.get("tasks", [])
@@ -83,7 +83,7 @@ async def fetch_drive_deadlines(user_id=None, timeout=10):
     try:
         async with aiohttp.ClientSession() as session:
             start_time = asyncio.get_event_loop().time()
-            async with session.get("http://localhost:5000/list_drive_deadlines", timeout=timeout) as response:
+            async with session.get("https://backend.data-ai.co/list_drive_deadlines", timeout=timeout) as response:
                 response.raise_for_status()
                 deadlines = await response.json()
                 deadlines = deadlines.get("deadlines", [])
