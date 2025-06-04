@@ -408,134 +408,224 @@ def generate_contextual_response(message_lower, suggestions, sentiment):
 
 # Add this to your recommendation.py - Enhanced connection status handling
 
+# In app/recommendation.py - Update generate_contextual_response_enhanced with better error handling
+
 def generate_contextual_response_enhanced(
     message: str, 
     user_id: str, 
     services: Dict[str, bool]
 ) -> Dict[str, Any]:
-    """Enhanced response generation with conversation context"""
+    """Enhanced response generation with conversation context - SAFER VERSION"""
     
-    context = get_user_context(user_id)
-    context.conversation_count += 1
-    message_lower = message.lower()
-    
-    # 1. Handle connection status
-    if any(phrase in message_lower for phrase in ["connected", "connection", "linked", "authenticated", "auth"]):
-        return handle_connection_status_request(message, services, context)
-
-    # 2. Handle inappropriate or off-topic
-    if not is_productivity_related(message):
-        return {
-            "response": "I'm here to help with your productivity and work tasks. How can I assist you with scheduling, organizing, or managing your work?",
-            "suggestions": [],
-            "follow_up_questions": ["What work task can I help you with?"],
-            "intent": "off_topic",
-            "confidence": 0.9
-        }
-
-    # 3. Handle user frustration
-    if any(phrase in message_lower for phrase in ["not what i asked", "repeating", "same thing", "unhelpful", "wrong answer"]):
-        return handle_user_frustration(message, services, context)
-
-    # 4. Handle rejections
-    if detect_rejection(message):
-        rejected_service = extract_rejected_service(message)
-        if rejected_service:
-            context.add_rejection(rejected_service)
-        return {
-            "response": "Got it! What else can I help you with today?",
-            "suggestions": generate_fresh_suggestions(services, context),
-            "follow_up_questions": ["Is there anything specific you'd like to work on?"],
-            "intent": "rejection_handled",
-            "confidence": 0.9
-        }
-
-    # ✅ Fallback for unmatched logic (must return something)
-    return {
-        "response": "I'm still learning to help better with your request. Could you please clarify what you'd like to do?",
-        "suggestions": generate_minimal_suggestions(services, context),
-        "follow_up_questions": ["Would you like to check your calendar or Notion workspace?"],
-        "intent": "default_fallback",
-        "confidence": 0.5
-    }
-
-    
-    # Rest of your existing logic...
-    # (keeping the existing code structure)
-
-# NEW: Add these handler functions
-
-def handle_connection_status_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
-    """Handle questions about service connection status"""
-    message_lower = message.lower()
-    
-    # Determine which service they're asking about
-    if any(word in message_lower for word in ["calendar", "google calendar"]):
-        service_name = "Google Calendar"
-        service_key = "google_calendar"
-        auth_url = "/auth/google"
-    elif any(word in message_lower for word in ["gmail", "email"]):
-        service_name = "Gmail"
-        service_key = "gmail" 
-        auth_url = "/auth/google"
-    elif any(word in message_lower for word in ["notion"]):
-        service_name = "Notion"
-        service_key = "notion"
-        auth_url = "/auth/notion"
-    elif any(word in message_lower for word in ["slack"]):
-        service_name = "Slack"
-        service_key = "slack"
-        auth_url = "/auth/slack"
-    elif any(word in message_lower for word in ["zoom"]):
-        service_name = "Zoom"
-        service_key = "zoom"
-        auth_url = "/auth/zoom"
-    else:
-        # General connection status
-        connected_services = [name for name, connected in services.items() if connected]
-        if connected_services:
-            service_list = ", ".join(connected_services).replace("_", " ").title()
+    try:
+        # Validate inputs
+        if not message or not isinstance(message, str):
+            message = "help"
+        if not user_id or not isinstance(user_id, str):
+            raise Exception("Invalid user_id")
+        if services is None:
+            services = {}
+        
+        context = get_user_context(user_id)
+        if context is None:
+            context = ConversationContext()
+            
+        context.conversation_count += 1
+        message_lower = message.lower()
+        
+        # 1. Handle connection status questions FIRST
+        if any(phrase in message_lower for phrase in ["connected", "connection", "linked", "authenticated", "auth"]):
+            return handle_connection_status_request(message, services, context)
+        
+        # 2. Handle calendar requests
+        if any(phrase in message_lower for phrase in ["calendar", "events", "schedule"]):
+            if services.get("google_calendar"):
+                return {
+                    "response": "I can show you your calendar events!",
+                    "suggestions": [{
+                        "action": "Check calendar",
+                        "service": "google_calendar",
+                        "description": "View your upcoming events",
+                        "priority": 5
+                    }],
+                    "follow_up_questions": ["Would you like to see specific dates?"],
+                    "intent": "calendar_request",
+                    "confidence": 0.9
+                }
+            else:
+                return {
+                    "response": "To view your calendar, please connect your Google Calendar first.",
+                    "suggestions": [{
+                        "action": "Connect Google Calendar",
+                        "service": "google_calendar",
+                        "description": "Enable calendar integration",
+                        "priority": 5
+                    }],
+                    "follow_up_questions": [],
+                    "intent": "calendar_not_connected",
+                    "confidence": 0.9
+                }
+        
+        # 3. Handle email requests
+        elif any(phrase in message_lower for phrase in ["email", "gmail", "inbox", "messages"]):
+            if services.get("gmail"):
+                return {
+                    "response": "I can help you with your emails!",
+                    "suggestions": [{
+                        "action": "List Gmail messages",
+                        "service": "gmail",
+                        "description": "Check your recent emails",
+                        "priority": 5
+                    }],
+                    "follow_up_questions": ["Would you like to compose a new email?"],
+                    "intent": "email_request",
+                    "confidence": 0.9
+                }
+            else:
+                return {
+                    "response": "To access your emails, please connect your Gmail first.",
+                    "suggestions": [{
+                        "action": "Connect Gmail",
+                        "service": "gmail", 
+                        "description": "Enable email integration",
+                        "priority": 5
+                    }],
+                    "follow_up_questions": [],
+                    "intent": "email_not_connected",
+                    "confidence": 0.9
+                }
+        
+        # 4. Handle greetings
+        elif any(word in message_lower for word in ["hi", "hello", "hey"]):
             return {
-                "response": f"✅ You have these services connected: {service_list}. What would you like to do with them?",
-                "suggestions": generate_fresh_suggestions(services, context, max_suggestions=3),
-                "follow_up_questions": ["Which service would you like to use?"],
-                "intent": "connection_status_general",
+                "response": "Hi! I can help you with your calendar, emails, and productivity tasks. What would you like to do?",
+                "suggestions": generate_safe_suggestions(services),
+                "follow_up_questions": ["What's your main priority right now?"],
+                "intent": "greeting",
+                "confidence": 0.9
+            }
+        
+        # 5. Default response
+        else:
+            return {
+                "response": "I can help you with your calendar, emails, or other productivity tasks. What would you like to do?",
+                "suggestions": generate_safe_suggestions(services),
+                "follow_up_questions": ["What would you like me to help you with?"],
+                "intent": "general_help",
+                "confidence": 0.7
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in generate_contextual_response_enhanced: {str(e)}")
+        # Return safe fallback
+        return {
+            "response": "I can help you with your productivity tasks. What would you like to do?",
+            "suggestions": [{
+                "action": "Check calendar",
+                "service": "google_calendar",
+                "description": "View your events",
+                "priority": 5
+            }],
+            "follow_up_questions": ["How can I assist you?"],
+            "intent": "fallback",
+            "confidence": 0.5
+        }
+
+def generate_safe_suggestions(services: Dict[str, bool]) -> List[Dict]:
+    """Generate safe suggestions without context tracking"""
+    suggestions = []
+    
+    if services.get("google_calendar"):
+        suggestions.append({
+            "action": "Check calendar",
+            "service": "google_calendar",
+            "description": "View your upcoming events",
+            "priority": 5
+        })
+    
+    if services.get("gmail"):
+        suggestions.append({
+            "action": "List Gmail messages",
+            "service": "gmail",
+            "description": "Check your recent emails", 
+            "priority": 4
+        })
+    
+    if services.get("notion"):
+        suggestions.append({
+            "action": "List Notion pages",
+            "service": "notion",
+            "description": "View your workspace",
+            "priority": 3
+        })
+    
+    return suggestions[:2]  # Limit to 2 suggestions
+
+def handle_connection_status_request(message: str, services: Dict[str, bool], context) -> Dict:
+    """Simplified connection status handler"""
+    try:
+        message_lower = message.lower()
+        
+        if "calendar" in message_lower:
+            if services.get("google_calendar"):
+                return {
+                    "response": "✅ Yes! Your Google Calendar is connected and ready to use.",
+                    "suggestions": [{
+                        "action": "Check calendar",
+                        "service": "google_calendar",
+                        "description": "View your upcoming events",
+                        "priority": 5
+                    }],
+                    "follow_up_questions": ["Would you like to see your events?"],
+                    "intent": "calendar_connected",
+                    "confidence": 0.9
+                }
+            else:
+                return {
+                    "response": "❌ No, your Google Calendar isn't connected yet.",
+                    "suggestions": [{
+                        "action": "Connect Google Calendar",
+                        "service": "google_calendar",
+                        "description": "Connect your calendar",
+                        "priority": 5
+                    }],
+                    "follow_up_questions": [],
+                    "intent": "calendar_not_connected",
+                    "confidence": 0.9
+                }
+        
+        # Default connection status
+        connected_count = sum(1 for connected in services.values() if connected)
+        if connected_count > 0:
+            return {
+                "response": f"✅ You have {connected_count} service(s) connected.",
+                "suggestions": generate_safe_suggestions(services),
+                "follow_up_questions": ["What would you like to do?"],
+                "intent": "connection_status",
                 "confidence": 0.9
             }
         else:
             return {
-                "response": "❌ No services are connected yet. Would you like to connect a service?",
-                "suggestions": [
-                    {"action": "Connect Google Calendar", "service": "google_calendar", "description": "Connect your calendar", "priority": 5},
-                    {"action": "Connect Gmail", "service": "gmail", "description": "Connect your email", "priority": 4},
-                    {"action": "Connect Notion", "service": "notion", "description": "Connect your workspace", "priority": 3}
-                ],
-                "follow_up_questions": ["Which service would you like to connect first?"],
-                "intent": "connection_status_none",
+                "response": "❌ No services are connected yet.",
+                "suggestions": [{
+                    "action": "Connect Google Calendar",
+                    "service": "google_calendar",
+                    "description": "Connect your calendar",
+                    "priority": 5
+                }],
+                "follow_up_questions": [],
+                "intent": "no_connections",
                 "confidence": 0.9
             }
-    
-    # Check specific service status
-    if services.get(service_key):
+            
+    except Exception as e:
+        logger.error(f"Error in handle_connection_status_request: {str(e)}")
         return {
-            "response": f"✅ Yes! Your {service_name} is connected and ready to use. What would you like to do?",
-            "suggestions": generate_service_suggestions(service_key, context),
-            "follow_up_questions": [f"Would you like me to show your {service_name.lower()} data?"],
-            "intent": f"connection_status_{service_key}",
-            "confidence": 0.9
-        }
-    else:
-        return {
-            "response": f"❌ No, your {service_name} isn't connected yet. Would you like me to help you connect it?",
-            "suggestions": [{
-                "action": f"Connect {service_name}",
-                "service": service_key,
-                "description": f"Connect your {service_name} account",
-                "priority": 5
-            }],
+            "response": "I can help you check your service connections.",
+            "suggestions": [],
             "follow_up_questions": [],
-            "intent": f"connection_status_{service_key}_not_connected",
-            "confidence": 0.9
+            "intent": "connection_error",
+            "confidence": 0.5
         }
 
 def handle_user_frustration(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
