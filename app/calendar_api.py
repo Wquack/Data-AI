@@ -27,6 +27,8 @@ SCOPES = [
 
 # In app/calendar_api.py - Replace your get_calendar_service function
 
+# Replace get_calendar_service in app/calendar_api.py with this working version:
+
 def get_calendar_service(user_id):
     """Get authenticated Google Calendar service."""
     tokens = load_tokens(user_id)
@@ -86,7 +88,6 @@ def get_calendar_service(user_id):
     except Exception as e:
         logger.error(f"Failed to build Google Calendar service for user {user_id}: {e}")
         raise Exception(f"Failed to create Google Calendar service: {str(e)}")
-
 def get_drive_service(user_id):
     """Get authenticated Google Drive service."""
     tokens = load_tokens(user_id)
