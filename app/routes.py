@@ -21,20 +21,30 @@ from utils.db import get_db
 from utils.token_store import load_tokens
 from auth.auth_routes import get_current_user
 from utils.jwt_utils import generate_state_token, decode_state_token
+from typing import Optional
 
 # Updated imports - use the new enhanced function
 from .recommendation import (
     process_user_message, 
     chat_with_mistral, 
-    generate_contextual_response_enhanced  # ← Add this new import
+    generate_contextual_response_enhanced
 )
 
+from .calendar_api import (
+    create_calendar_event, 
+    list_calendar_events, 
+    upload_to_drive, 
+    send_gmail, 
+    create_calendar_event_with_zoom,
+    get_gmail_service,  # ← Add this import
+    get_calendar_service  # ← Add this import
+)
 from .calendar_api import create_calendar_event, list_calendar_events, upload_to_drive, send_gmail, create_calendar_event_with_zoom
 from .encryption import encrypt_data
 from .mistral_api import call_mistral_api
 from .slack_oauth import get_slack_auth_url, handle_slack_callback, post_to_slack
 from .zoom_oauth import get_zoom_auth_url, handle_zoom_callback, refresh_zoom_token
-from .notion_api import create_notion_page, list_notion_pages
+from .notion_api import create_notion_page, list_notion_pages , get_notion_client , search_notion_pages
 from .powerpoint_api import create_powerpoint_slides
 # Set up logging
 logging.basicConfig(
@@ -67,6 +77,35 @@ class ChatResponse(BaseModel):
     suggestions: List[Suggestion]
     follow_up_questions: List[str]
     notion_pages: List[Dict[str, Any]]
+
+class ComposeEmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    cc: Optional[str] = None
+    bcc: Optional[str] = None
+
+class SendEmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    cc: Optional[str] = None
+    bcc: Optional[str] = None
+
+# Calendar API models
+class CreateEventRequest(BaseModel):
+    summary: str
+    description: Optional[str] = ""
+    start_time: str  # ISO format: 2025-06-05T10:00:00
+    end_time: Optional[str] = None  # If not provided, will be start_time + 1 hour
+    timezone: Optional[str] = "Asia/Kolkata"
+    attendees: Optional[List[str]] = []  # List of email addresses
+    location: Optional[str] = ""
+
+class UpdateNotionPageRequest(BaseModel):
+    page_id: str
+    title: Optional[str] = None
+    content: Optional[str] = None  # New content to append
 
 # Helper Functions
 def get_user_services_context(user_tokens: Dict) -> Dict[str, bool]:
@@ -580,7 +619,7 @@ async def list_drive_deadlines_endpoint(request: Request, current_user: User = D
         logger.error(f"Error listing Google Drive deadlines: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get('/list_calendar_events')
+
 @router.post('/list_calendar_events')
 async def list_calendar_events_endpoint(request: Request, current_user: User = Depends(get_current_user)):
     try:
@@ -695,3 +734,461 @@ def execute_task_endpoint(
         if "notion token not found" in str(e).lower():
             raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"})
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get('/list_gmail_messages')
+async def list_gmail_messages(
+    max_results: int = 10,
+    query: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """List Gmail messages for the user"""
+    try:
+        user_id = str(current_user.id)
+        service = get_gmail_service(user_id)
+        
+        # Build query parameters
+        search_query = query if query else "in:inbox"
+        
+        # Get message list
+        messages_result = service.users().messages().list(
+            userId='me',
+            q=search_query,
+            maxResults=max_results
+        ).execute()
+        
+        messages = messages_result.get('messages', [])
+        
+        # Get detailed message info
+        detailed_messages = []
+        for message in messages:
+            msg = service.users().messages().get(
+                userId='me', 
+                id=message['id'],
+                format='metadata',
+                metadataHeaders=['From', 'Subject', 'Date']
+            ).execute()
+            
+            # Extract headers
+            headers = {h['name']: h['value'] for h in msg['payload'].get('headers', [])}
+            
+            detailed_messages.append({
+                'id': message['id'],
+                'from': headers.get('From', 'Unknown'),
+                'subject': headers.get('Subject', 'No Subject'),
+                'date': headers.get('Date', ''),
+                'snippet': msg.get('snippet', '')
+            })
+        
+        logger.info(f"Retrieved {len(detailed_messages)} Gmail messages for user {user_id}")
+        return {'messages': detailed_messages, 'total': len(detailed_messages)}
+        
+    except Exception as e:
+        logger.error(f"Error listing Gmail messages for user {current_user.id}: {str(e)}")
+        if "google authentication required" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"
+            })
+        raise HTTPException(status_code=500, detail=f"Error listing Gmail messages: {str(e)}")
+
+@router.post('/compose_gmail')
+async def compose_gmail(
+    email_data: ComposeEmailRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Compose (draft) an email in Gmail"""
+    try:
+        user_id = str(current_user.id)
+        service = get_gmail_service(user_id)
+        
+        # Create message
+        from email.mime.text import MIMEText
+        message = MIMEText(email_data.body)
+        message['to'] = email_data.to
+        message['subject'] = email_data.subject
+        if email_data.cc:
+            message['cc'] = email_data.cc
+        if email_data.bcc:
+            message['bcc'] = email_data.bcc
+        
+        # Create draft
+        import base64
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+        draft_body = {
+            'message': {
+                'raw': raw_message
+            }
+        }
+        
+        draft = service.users().drafts().create(userId='me', body=draft_body).execute()
+        
+        logger.info(f"Created Gmail draft for user {user_id}: {draft['id']}")
+        return {
+            'message': 'Email draft created successfully',
+            'draft_id': draft['id'],
+            'to': email_data.to,
+            'subject': email_data.subject
+        }
+        
+    except Exception as e:
+        logger.error(f"Error composing Gmail for user {current_user.id}: {str(e)}")
+        if "google authentication required" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"
+            })
+        raise HTTPException(status_code=500, detail=f"Error composing Gmail: {str(e)}")
+
+@router.post('/send_gmail')
+async def send_gmail_direct(
+    email_data: SendEmailRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Send an email directly via Gmail"""
+    try:
+        user_id = str(current_user.id)
+        result = send_gmail(
+            to=email_data.to,
+            subject=email_data.subject, 
+            body=email_data.body,
+            user_id=user_id
+        )
+        
+        logger.info(f"Sent Gmail for user {user_id} to {email_data.to}")
+        return {
+            'message': 'Email sent successfully',
+            'details': result,
+            'to': email_data.to,
+            'subject': email_data.subject
+        }
+        
+    except Exception as e:
+        logger.error(f"Error sending Gmail for user {current_user.id}: {str(e)}")
+        if "google authentication required" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"
+            })
+        raise HTTPException(status_code=500, detail=f"Error sending Gmail: {str(e)}")
+    
+
+# Calendar APIs
+@router.post('/create_calendar_event')
+async def create_calendar_event_direct(
+    event_data: CreateEventRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a Google Calendar event directly"""
+    try:
+        user_id = str(current_user.id)
+        service = get_calendar_service(user_id)
+        
+        # Parse start time
+        start_dt = datetime.fromisoformat(event_data.start_time.replace('Z', '+00:00'))
+        
+        # Calculate end time if not provided
+        if event_data.end_time:
+            end_dt = datetime.fromisoformat(event_data.end_time.replace('Z', '+00:00'))
+        else:
+            end_dt = start_dt + timedelta(hours=1)
+        
+        # Build attendees list
+        attendees_list = []
+        for email in event_data.attendees:
+            attendees_list.append({'email': email})
+        
+        # Create event object
+        event = {
+            'summary': event_data.summary,
+            'description': event_data.description,
+            'start': {
+                'dateTime': start_dt.isoformat(),
+                'timeZone': event_data.timezone,
+            },
+            'end': {
+                'dateTime': end_dt.isoformat(),
+                'timeZone': event_data.timezone,
+            },
+            'attendees': attendees_list,
+            'location': event_data.location,
+            'reminders': {
+                'useDefault': True
+            }
+        }
+        
+        # Create the event
+        created_event = service.events().insert(calendarId='primary', body=event).execute()
+        
+        logger.info(f"Created calendar event for user {user_id}: {created_event['id']}")
+        return {
+            'message': 'Calendar event created successfully',
+            'event_id': created_event['id'],
+            'summary': event_data.summary,
+            'start_time': event_data.start_time,
+            'html_link': created_event.get('htmlLink'),
+            'hangout_link': created_event.get('hangoutLink')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating calendar event for user {current_user.id}: {str(e)}")
+        if "google authentication required" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"
+            })
+        raise HTTPException(status_code=500, detail=f"Error creating calendar event: {str(e)}")
+
+@router.get('/calendar_events/{event_id}')
+async def get_calendar_event(
+    event_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific calendar event by ID"""
+    try:
+        user_id = str(current_user.id)
+        service = get_calendar_service(user_id)
+        
+        event = service.events().get(calendarId='primary', eventId=event_id).execute()
+        
+        return {
+            'id': event['id'],
+            'summary': event.get('summary', 'No Title'),
+            'description': event.get('description', ''),
+            'start': event['start'],
+            'end': event['end'],
+            'location': event.get('location', ''),
+            'attendees': event.get('attendees', []),
+            'html_link': event.get('htmlLink'),
+            'created': event.get('created'),
+            'updated': event.get('updated')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting calendar event for user {current_user.id}: {str(e)}")
+        if "google authentication required" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"
+            })
+        raise HTTPException(status_code=500, detail=f"Error getting calendar event: {str(e)}")
+
+@router.delete('/calendar_events/{event_id}')
+async def delete_calendar_event(
+    event_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a calendar event"""
+    try:
+        user_id = str(current_user.id)
+        service = get_calendar_service(user_id)
+        
+        service.events().delete(calendarId='primary', eventId=event_id).execute()
+        
+        logger.info(f"Deleted calendar event {event_id} for user {user_id}")
+        return {
+            'message': 'Calendar event deleted successfully',
+            'event_id': event_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting calendar event for user {current_user.id}: {str(e)}")
+        if "google authentication required" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"
+            })
+        raise HTTPException(status_code=500, detail=f"Error deleting calendar event: {str(e)}")
+    
+@router.put('/update_notion_page')
+async def update_notion_page(
+    update_data: UpdateNotionPageRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Update a Notion page"""
+    try:
+        user_id = str(current_user.id)
+        notion = get_notion_client(user_id)
+        
+        # Clean the page ID
+        page_id = update_data.page_id.replace("-", "")
+        if "?" in page_id:
+            page_id = page_id.split("?")[0]
+        
+        updates = {}
+        
+        # Update title if provided
+        if update_data.title:
+            updates["properties"] = {
+                "title": {
+                    "title": [{
+                        "type": "text",
+                        "text": {"content": update_data.title}
+                    }]
+                }
+            }
+        
+        # Update page properties
+        if updates:
+            notion.pages.update(page_id=page_id, **updates)
+            logger.info(f"Updated page properties for {page_id}")
+        
+        # Append content if provided
+        if update_data.content:
+            new_block = {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{
+                        "type": "text",
+                        "text": {"content": update_data.content}
+                    }]
+                }
+            }
+            
+            notion.blocks.children.append(
+                block_id=page_id,
+                children=[new_block]
+            )
+            logger.info(f"Appended content to page {page_id}")
+        
+        # Get updated page info
+        updated_page = notion.pages.retrieve(page_id=page_id)
+        
+        logger.info(f"Updated Notion page for user {user_id}: {page_id}")
+        return {
+            'message': 'Notion page updated successfully',
+            'page_id': page_id,
+            'title': update_data.title,
+            'url': updated_page['url'],
+            'last_edited': updated_page.get('last_edited_time')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating Notion page for user {current_user.id}: {str(e)}")
+        if "notion not connected" in str(e).lower() or "notion access token not found" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"
+            })
+        raise HTTPException(status_code=500, detail=f"Error updating Notion page: {str(e)}")
+
+@router.delete('/delete_notion_page/{page_id}')
+async def delete_notion_page(
+    page_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete (archive) a Notion page"""
+    try:
+        user_id = str(current_user.id)
+        notion = get_notion_client(user_id)
+        
+        # Clean the page ID
+        clean_page_id = page_id.replace("-", "")
+        if "?" in clean_page_id:
+            clean_page_id = clean_page_id.split("?")[0]
+        
+        # Archive the page (Notion doesn't allow true deletion)
+        notion.pages.update(
+            page_id=clean_page_id,
+            archived=True
+        )
+        
+        logger.info(f"Archived Notion page for user {user_id}: {clean_page_id}")
+        return {
+            'message': 'Notion page archived successfully',
+            'page_id': clean_page_id,
+            'note': 'Page has been archived (moved to trash) as Notion does not support permanent deletion'
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting Notion page for user {current_user.id}: {str(e)}")
+        if "notion not connected" in str(e).lower() or "notion access token not found" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"
+            })
+        raise HTTPException(status_code=500, detail=f"Error deleting Notion page: {str(e)}")
+
+@router.get('/notion_page/{page_id}')
+async def get_notion_page(
+    page_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed information about a Notion page"""
+    try:
+        user_id = str(current_user.id)
+        notion = get_notion_client(user_id)
+        
+        # Clean the page ID
+        clean_page_id = page_id.replace("-", "")
+        if "?" in clean_page_id:
+            clean_page_id = clean_page_id.split("?")[0]
+        
+        # Get page details
+        page = notion.pages.retrieve(page_id=clean_page_id)
+        
+        # Get page title
+        title = "Untitled"
+        if page.get("properties", {}).get("title", {}).get("title"):
+            title_array = page["properties"]["title"]["title"]
+            if title_array and len(title_array) > 0:
+                title = title_array[0]["plain_text"]
+        
+        # Get page content (blocks)
+        blocks = notion.blocks.children.list(block_id=clean_page_id)
+        
+        content_text = ""
+        for block in blocks.get("results", []):
+            if block["type"] == "paragraph":
+                for rich_text in block["paragraph"]["rich_text"]:
+                    content_text += rich_text["plain_text"] + "\n"
+        
+        logger.info(f"Retrieved Notion page details for user {user_id}: {clean_page_id}")
+        return {
+            'id': page['id'],
+            'title': title,
+            'url': page['url'],
+            'created_time': page.get('created_time'),
+            'last_edited_time': page.get('last_edited_time'),
+            'archived': page.get('archived', False),
+            'content_preview': content_text[:500] + "..." if len(content_text) > 500 else content_text,
+            'block_count': len(blocks.get("results", []))
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting Notion page for user {current_user.id}: {str(e)}")
+        if "notion not connected" in str(e).lower() or "notion access token not found" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"
+            })
+        raise HTTPException(status_code=500, detail=f"Error getting Notion page: {str(e)}")
+
+@router.post('/create_notion_page_direct')
+async def create_notion_page_direct(
+    page_data: dict = Body(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new Notion page directly"""
+    try:
+        user_id = str(current_user.id)
+        
+        result = create_notion_page(
+            event_summary=page_data.get("title", "New Page"),
+            parent_page_id=page_data.get("parent_page_id"),
+            user_id=user_id,
+            extra_text=page_data.get("content", ""),
+            drive_link=page_data.get("drive_link")
+        )
+        
+        logger.info(f"Created Notion page for user {user_id}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error creating Notion page for user {current_user.id}: {str(e)}")
+        if "notion not connected" in str(e).lower() or "notion access token not found" in str(e).lower():
+            raise HTTPException(status_code=401, detail={
+                'action': 'Requires authentication', 
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"
+            })
+        raise HTTPException(status_code=500, detail=f"Error creating Notion page: {str(e)}")

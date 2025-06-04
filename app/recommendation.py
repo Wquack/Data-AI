@@ -1,4 +1,4 @@
-# app/recommendation.py - Complete fixed version
+# app/recommendation.py - Fixed and enhanced version
 
 import logging
 import aiohttp
@@ -22,9 +22,10 @@ PRODUCTIVITY_KEYWORDS = [
     "productivity", "manage", "time", "busy", "focus", "goal", "priority"
 ]
 
+# FIXED: Added missing comma after "inappropriate"
 INAPPROPRIATE_KEYWORDS = [
     "sex", "dating", "relationship", "love", "personal", "private", "intimate",
-    "nsfw", "adult", "inappropriate"  "orgy" , "lesbian"
+    "nsfw", "adult", "inappropriate", "orgy", "lesbian"
 ]
 
 REJECTION_PATTERNS = [
@@ -454,15 +455,30 @@ def generate_contextual_response_enhanced(
         context.last_intent = "schedule_meeting"
         return handle_scheduling_request(message, services, context)
     
-    elif "email" in message_lower:
-        context.last_intent = "send_email"
-        return handle_email_request(message, services, context)
+    elif any(phrase in message_lower for phrase in ["email", "gmail", "inbox", "messages"]):
+        context.last_intent = "email_management"
+        return handle_email_management_request(message, services, context)
     
     elif "note" in message_lower or "document" in message_lower:
         context.last_intent = "create_document"
         return handle_document_request(message, services, context)
     
-    # 5. Default helpful response
+    # 5. Handle Notion pages requests
+    elif any(phrase in message_lower for phrase in ["list notion pages", "show notion pages", "notion pages", "my notion pages", "view notion"]):
+        context.last_intent = "list_notion_pages"
+        return handle_notion_pages_request(message, services, context)
+    
+    # 6. Handle calendar events requests  
+    elif any(phrase in message_lower for phrase in ["list calendar", "show calendar", "calendar events", "my events", "check calendar"]):
+        context.last_intent = "list_calendar_events"
+        return handle_calendar_events_request(message, services, context)
+    
+    # 7. Handle Slack requests
+    elif any(phrase in message_lower for phrase in ["slack", "channels", "team chat", "post message"]):
+        context.last_intent = "slack_management"
+        return handle_slack_management_request(message, services, context)
+    
+    # 8. Default helpful response
     return {
         "response": "I can help you with scheduling meetings, sending emails, creating documents, or organizing your tasks. What would you like to work on?",
         "suggestions": generate_fresh_suggestions(services, context, max_suggestions=2),
@@ -476,11 +492,11 @@ def generate_fresh_suggestions(
     context: ConversationContext,
     max_suggestions: int = 2
 ) -> List[Dict]:
-    """Generate suggestions that haven't been rejected or repeated"""
+    """Generate suggestions that haven't been rejected or repeated - UPDATED"""
     
     suggestions = []
     
-    # Only suggest connected services that aren't rejected
+    # Calendar suggestions
     if services.get("google_calendar") and not context.is_rejected("calendar"):
         if not context.already_suggested("check calendar"):
             suggestions.append({
@@ -491,25 +507,38 @@ def generate_fresh_suggestions(
             })
             context.add_suggested_action("check calendar")
     
+    # Gmail suggestions  
     if services.get("gmail") and not context.is_rejected("email"):
-        if not context.already_suggested("check email"):
+        if not context.already_suggested("list gmail messages"):
             suggestions.append({
-                "action": "Check email", 
+                "action": "List Gmail messages", 
                 "service": "gmail",
-                "description": "Review important messages",
+                "description": "Check your recent emails",
                 "priority": 4
             })
-            context.add_suggested_action("check email")
+            context.add_suggested_action("list gmail messages")
     
+    # Notion suggestions
     if services.get("notion") and not context.is_rejected("notion"):
-        if not context.already_suggested("organize tasks"):
+        if not context.already_suggested("list notion pages"):
             suggestions.append({
-                "action": "Organize tasks",
+                "action": "List Notion pages",
                 "service": "notion", 
-                "description": "Plan your work in Notion",
+                "description": "View your Notion workspace",
                 "priority": 3
             })
-            context.add_suggested_action("organize tasks")
+            context.add_suggested_action("list notion pages")
+    
+    # Slack suggestions
+    if services.get("slack") and not context.is_rejected("slack"):
+        if not context.already_suggested("list slack channels"):
+            suggestions.append({
+                "action": "List Slack channels",
+                "service": "slack",
+                "description": "View your team channels", 
+                "priority": 3
+            })
+            context.add_suggested_action("list slack channels")
     
     # Limit suggestions and prioritize
     return sorted(suggestions, key=lambda x: x["priority"], reverse=True)[:max_suggestions]
@@ -550,8 +579,141 @@ def handle_scheduling_request(message: str, services: Dict[str, bool], context: 
             "confidence": 0.9
         }
 
+def handle_email_management_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+    """Handle email management requests with new Gmail APIs"""
+    message_lower = message.lower()
+    
+    if services.get("gmail"):
+        # Determine specific email action
+        if any(phrase in message_lower for phrase in ["list", "show", "inbox", "messages"]):
+            return {
+                "response": "I'll show you your recent Gmail messages!",
+                "suggestions": [{
+                    "action": "List Gmail messages",
+                    "service": "gmail",
+                    "description": "View your recent emails",
+                    "priority": 5
+                }],
+                "follow_up_questions": ["Would you like to compose a new email?"],
+                "intent": "list_gmail_messages",
+                "confidence": 0.9
+            }
+        elif any(phrase in message_lower for phrase in ["compose", "write", "send", "new email"]):
+            return {
+                "response": "I can help you compose an email!",
+                "suggestions": [{
+                    "action": "Compose email",
+                    "service": "gmail",
+                    "description": "Create a new email draft",
+                    "priority": 5
+                }],
+                "follow_up_questions": ["Who would you like to send this email to?"],
+                "intent": "compose_email",
+                "confidence": 0.9
+            }
+        else:
+            return {
+                "response": "I can help you with your Gmail! What would you like to do?",
+                "suggestions": [
+                    {
+                        "action": "List Gmail messages",
+                        "service": "gmail",
+                        "description": "View your recent emails",
+                        "priority": 5
+                    },
+                    {
+                        "action": "Compose email",
+                        "service": "gmail", 
+                        "description": "Create a new email",
+                        "priority": 4
+                    }
+                ],
+                "follow_up_questions": ["Would you like to check your inbox or compose a new email?"],
+                "intent": "email_management",
+                "confidence": 0.9
+            }
+    else:
+        return {
+            "response": "To help with emails, please connect your Gmail account first.",
+            "suggestions": [{
+                "action": "Connect Gmail",
+                "service": "gmail",
+                "description": "Enable Gmail integration",
+                "priority": 5
+            }],
+            "follow_up_questions": [],
+            "intent": "email_management",
+            "confidence": 0.9
+        }
+
+def handle_slack_management_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+    """Handle Slack management requests with new Slack APIs"""
+    message_lower = message.lower()
+    
+    if services.get("slack"):
+        if any(phrase in message_lower for phrase in ["channels", "list", "show"]):
+            return {
+                "response": "I'll show you your Slack channels!",
+                "suggestions": [{
+                    "action": "List Slack channels",
+                    "service": "slack",
+                    "description": "View your Slack channels",
+                    "priority": 5
+                }],
+                "follow_up_questions": ["Which channel would you like to post to?"],
+                "intent": "list_slack_channels",
+                "confidence": 0.9
+            }
+        elif any(phrase in message_lower for phrase in ["post", "send", "message"]):
+            return {
+                "response": "I can help you post a message to Slack!",
+                "suggestions": [{
+                    "action": "Post to Slack",
+                    "service": "slack",
+                    "description": "Send a message to a channel",
+                    "priority": 5
+                }],
+                "follow_up_questions": ["What message would you like to send?"],
+                "intent": "post_slack_message",
+                "confidence": 0.9
+            }
+        else:
+            return {
+                "response": "I can help you with Slack! What would you like to do?",
+                "suggestions": [
+                    {
+                        "action": "List Slack channels",
+                        "service": "slack",
+                        "description": "View your channels",
+                        "priority": 5
+                    },
+                    {
+                        "action": "Post to Slack",
+                        "service": "slack",
+                        "description": "Send a message",
+                        "priority": 4
+                    }
+                ],
+                "follow_up_questions": ["Would you like to see your channels or post a message?"],
+                "intent": "slack_management", 
+                "confidence": 0.9
+            }
+    else:
+        return {
+            "response": "To help with Slack, please connect your Slack workspace first.",
+            "suggestions": [{
+                "action": "Connect Slack",
+                "service": "slack",
+                "description": "Enable Slack integration",
+                "priority": 5
+            }],
+            "follow_up_questions": [],
+            "intent": "slack_management",
+            "confidence": 0.9
+        }
+
 def handle_email_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
-    """Handle email-related requests"""
+    """Handle email-related requests (LEGACY - kept for compatibility)"""
     if services.get("gmail"):
         return {
             "response": "I can help you with that email!",
@@ -605,6 +767,64 @@ def handle_document_request(message: str, services: Dict[str, bool], context: Co
             }],
             "follow_up_questions": [],
             "intent": "create_document",
+            "confidence": 0.9
+        }
+
+def handle_notion_pages_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+    """Handle Notion pages listing requests specifically"""
+    if services.get("notion"):
+        return {
+            "response": "I'll show you your Notion pages right away!",
+            "suggestions": [{
+                "action": "List Notion pages",
+                "service": "notion", 
+                "description": "View all your Notion pages",
+                "priority": 5
+            }],
+            "follow_up_questions": ["Which page would you like to work on?"],
+            "intent": "list_notion_pages",
+            "confidence": 0.9
+        }
+    else:
+        return {
+            "response": "To view your Notion pages, I'll need access to your Notion workspace first.",
+            "suggestions": [{
+                "action": "Connect Notion",
+                "service": "notion",
+                "description": "Enable Notion integration to view your pages", 
+                "priority": 5
+            }],
+            "follow_up_questions": [],
+            "intent": "list_notion_pages",
+            "confidence": 0.9
+        }
+
+def handle_calendar_events_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+    """Handle calendar events listing requests specifically"""
+    if services.get("google_calendar"):
+        return {
+            "response": "Let me fetch your calendar events for you!",
+            "suggestions": [{
+                "action": "Check calendar",
+                "service": "google_calendar", 
+                "description": "View your upcoming events",
+                "priority": 5
+            }],
+            "follow_up_questions": ["Would you like to see events for a specific date range?"],
+            "intent": "list_calendar_events",
+            "confidence": 0.9
+        }
+    else:
+        return {
+            "response": "To view your calendar events, I'll need access to your Google Calendar first.",
+            "suggestions": [{
+                "action": "Connect Google Calendar",
+                "service": "google_calendar",
+                "description": "Enable Google Calendar integration", 
+                "priority": 5
+            }],
+            "follow_up_questions": [],
+            "intent": "list_calendar_events",
             "confidence": 0.9
         }
 

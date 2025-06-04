@@ -35,38 +35,38 @@ class SimpleRateLimiter:
         
         return False
 
-# class BasicRateLimitMiddleware(BaseHTTPMiddleware):
-#     """Basic rate limiting that works with your existing middleware"""
+class BasicRateLimitMiddleware(BaseHTTPMiddleware):
+    """Basic rate limiting that works with your existing middleware"""
     
-#     def __init__(self, app):
-#         super().__init__(app)
-#         self.limiter = SimpleRateLimiter(max_requests=100, window_seconds=3600)
-#         self.exempt_paths = {"/ping", "/health", "/docs", "/openapi.json"}
+    def __init__(self, app):
+        super().__init__(app)
+        self.limiter = SimpleRateLimiter(max_requests=100, window_seconds=3600)
+        self.exempt_paths = {"/ping", "/health", "/docs", "/openapi.json"}
     
-#     def get_client_ip(self, request: Request) -> str:
-#         """Get client IP address"""
-#         forwarded_for = request.headers.get("x-forwarded-for")
-#         if forwarded_for:
-#             return forwarded_for.split(',')[0].strip()
+    def get_client_ip(self, request: Request) -> str:
+        """Get client IP address"""
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            return forwarded_for.split(',')[0].strip()
         
-#         client_ip = request.client.host if request.client else "unknown"
-#         return client_ip
+        client_ip = request.client.host if request.client else "unknown"
+        return client_ip
     
-#     async def dispatch(self, request: Request, call_next):
-#         # Skip rate limiting for exempt paths
-#         if request.url.path in self.exempt_paths:
-#             return await call_next(request)
+    async def dispatch(self, request: Request, call_next):
+        # Skip rate limiting for exempt paths
+        if request.url.path in self.exempt_paths:
+            return await call_next(request)
         
-#         # Check rate limit
-#         client_ip = self.get_client_ip(request)
-#         if not self.limiter.is_allowed(client_ip):
-#             logger.warning(f"Rate limit exceeded for {client_ip} on {request.url.path}")
-#             return JSONResponse(
-#                 status_code=429,
-#                 content={"error": "Rate limit exceeded", "message": "Too many requests"}
-#             )
+        # Check rate limit
+        client_ip = self.get_client_ip(request)
+        if not self.limiter.is_allowed(client_ip):
+            logger.warning(f"Rate limit exceeded for {client_ip} on {request.url.path}")
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Rate limit exceeded", "message": "Too many requests"}
+            )
         
-#         return await call_next(request)
+        return await call_next(request)
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Simple request logging compatible with your system"""
