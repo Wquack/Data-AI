@@ -239,6 +239,39 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
     
     return RedirectResponse(url="https://chat.data-ai.co/connect?google=success")
 
+# Add this to auth/auth_routes.py
+
+@router.get("/auth/google/force-reauth")
+def force_google_reauth(current_user: User = Depends(get_current_user)):
+    """Force user to re-authenticate with Google to get fresh refresh token"""
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+    
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    
+    state_token = generate_state_token(str(current_user.id))
+    
+    # Force consent to ensure we get a refresh token
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email openid",
+        "access_type": "offline",  # This ensures we get refresh token
+        "prompt": "consent",       # Force consent screen to get refresh token
+        "state": state_token
+    }
+    
+    from urllib.parse import urlencode
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+    
+    return {
+        "redirect_url": url, 
+        "message": "Please re-authorize to get fresh tokens with refresh capability",
+        "instructions": "Visit this URL in your browser to re-connect Google with refresh token"
+    }
+
 # ---- Zoom OAuth ----
 @router.get("/auth/zoom")
 def auth_zoom(current_user: User = Depends(get_current_user)):
