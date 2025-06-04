@@ -419,11 +419,11 @@ def generate_contextual_response_enhanced(
     context.conversation_count += 1
     message_lower = message.lower()
     
-    # 1. NEW: Handle connection status questions FIRST
+    # 1. Handle connection status
     if any(phrase in message_lower for phrase in ["connected", "connection", "linked", "authenticated", "auth"]):
         return handle_connection_status_request(message, services, context)
-    
-    # 2. Check if message is inappropriate or off-topic
+
+    # 2. Handle inappropriate or off-topic
     if not is_productivity_related(message):
         return {
             "response": "I'm here to help with your productivity and work tasks. How can I assist you with scheduling, organizing, or managing your work?",
@@ -432,17 +432,16 @@ def generate_contextual_response_enhanced(
             "intent": "off_topic",
             "confidence": 0.9
         }
-    
-    # 3. NEW: Handle user frustration/complaints
+
+    # 3. Handle user frustration
     if any(phrase in message_lower for phrase in ["not what i asked", "repeating", "same thing", "unhelpful", "wrong answer"]):
         return handle_user_frustration(message, services, context)
-    
+
     # 4. Handle rejections
     if detect_rejection(message):
         rejected_service = extract_rejected_service(message)
         if rejected_service:
             context.add_rejection(rejected_service)
-        
         return {
             "response": "Got it! What else can I help you with today?",
             "suggestions": generate_fresh_suggestions(services, context),
@@ -450,6 +449,16 @@ def generate_contextual_response_enhanced(
             "intent": "rejection_handled",
             "confidence": 0.9
         }
+
+    # ✅ Fallback for unmatched logic (must return something)
+    return {
+        "response": "I'm still learning to help better with your request. Could you please clarify what you'd like to do?",
+        "suggestions": generate_minimal_suggestions(services, context),
+        "follow_up_questions": ["Would you like to check your calendar or Notion workspace?"],
+        "intent": "default_fallback",
+        "confidence": 0.5
+    }
+
     
     # Rest of your existing logic...
     # (keeping the existing code structure)
