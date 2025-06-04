@@ -156,6 +156,7 @@ def generate_oauth_redirect_url(base_url, params):
     return url
 
 # ---- Google OAuth ----
+# In auth_routes.py, modify the /auth/google endpoint
 @router.get("/auth/google")
 def auth_google(current_user: User = Depends(get_current_user)):
     client_id = os.getenv("GOOGLE_CLIENT_ID")
@@ -172,6 +173,7 @@ def auth_google(current_user: User = Depends(get_current_user)):
         "response_type": "code",
         "scope": "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid",
         "access_type": "offline",
+        "prompt": "consent",  # Add this to force consent screen
         "state": state_token
     })
     logger.info(f"Generated Google OAuth URL: {url}")
