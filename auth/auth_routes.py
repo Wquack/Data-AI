@@ -214,6 +214,7 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Google token exchange failed")
 
     token_data = res.json()
+    logger.info(f"Google token response: {token_data}")
     
     # Ensure we save all required fields
     google_tokens = {
