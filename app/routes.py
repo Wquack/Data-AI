@@ -459,66 +459,48 @@ def create_zoom_meeting_logic(data, user_id):
 def ping():
     return {"message": "pong"}
 
+# In app/routes.py - Replace your existing /chat endpoint with this:
+
 @router.post("/chat")
 async def chat_endpoint(request: Request, current_user: User = Depends(get_current_user)):
     try:
-        user_id = current_user.id
+        user_id = str(current_user.id)
         data = await request.json()
-        message = data.get("message", "")
+        message = data.get("message", "").strip()
 
-        if not isinstance(message, str) or not message.strip():
-            raise HTTPException(status_code=400, detail="Invalid message")
+        if not message:
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
 
         logger.info(f"Processing message for user {user_id}: {message}")
 
-        # Step 1: Analyze user intent
-        intent_analysis = analyze_user_intent(message)
-        logger.info(f"Detected intent: {intent_analysis['intent']} with confidence: {intent_analysis['confidence']}")
-        
-        # Step 2: Get user's available services
-        user_tokens = load_tokens(str(user_id))
+        # Get user's available services
+        user_tokens = load_tokens(user_id)
         services = get_user_services_context(user_tokens or {})
-        logger.info(f"Available services for user {user_id}: {services}")
         
-        # Step 3: Generate intelligent response
-        response_text = generate_intelligent_response(
-            message, 
-            intent_analysis["intent"], 
-            services
-        )
+        # Use the new enhanced contextual response generator
+        from .recommendation import generate_contextual_response_enhanced
         
-        # Step 4: Generate smart suggestions
-        suggestions = generate_smart_suggestions(
-            intent_analysis["intent"], 
-            message, 
-            services
-        )
+        result = generate_contextual_response_enhanced(message, user_id, services)
         
-        # Step 5: Generate follow-up questions
-        follow_up_questions = generate_follow_up_questions(
-            intent_analysis["intent"], 
-            message
-        )
-        
-        logger.info(f"Generated {len(suggestions)} suggestions and {len(follow_up_questions)} follow-up questions")
+        logger.info(f"Generated response for user {user_id}: {result['intent']}")
         
         return {
             "message": message,
-            "intent": intent_analysis["intent"],
-            "confidence": intent_analysis["confidence"],
-            "response": response_text,
-            "suggestions": suggestions,
-            "follow_up_questions": follow_up_questions,
-            "notion_pages": []
+            "intent": result["intent"],
+            "confidence": result["confidence"], 
+            "response": result["response"],
+            "suggestions": result["suggestions"],
+            "follow_up_questions": result.get("follow_up_questions", []),
+            "notion_pages": []  # Will be populated if needed for specific requests
         }
         
     except Exception as e:
-        logger.error(f"Error in chat processing for user {user_id}: {str(e)}")
+        logger.error(f"Error in chat processing for user {current_user.id}: {str(e)}")
         return {
             "message": message,
-            "intent": "general_question",
+            "intent": "error",
             "confidence": 0.5,
-            "response": "I encountered an error processing your request. Please try again.",
+            "response": "I encountered an error. Please try rephrasing your request.",
             "suggestions": [],
             "follow_up_questions": [],
             "notion_pages": []
@@ -545,7 +527,7 @@ async def list_notion_pages_endpoint(current_user: User = Depends(get_current_us
         if "notion not connected" in str(e).lower() or "notion access token not found" in str(e).lower():
             raise HTTPException(status_code=401, detail={
                 'action': 'Requires authentication', 
-                'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:8000')}/auth/notion"
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"
             })
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -564,7 +546,7 @@ async def search_notion_pages_endpoint(
         if "notion not connected" in str(e).lower():
             raise HTTPException(status_code=401, detail={
                 'action': 'Requires authentication', 
-                'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:8000')}/auth/notion"
+                'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"
             })
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -619,7 +601,7 @@ async def list_calendar_events_endpoint(request: Request, current_user: User = D
     except Exception as e:
         logger.error(f"Error listing calendar events: {str(e)}")
         if "google authentication required" in str(e).lower():
-            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
+            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"})
         raise HTTPException(status_code=500, detail=f"Error listing calendar events: {str(e)}")
 
 @router.get('/download_slides/{filename}')
@@ -701,7 +683,7 @@ def execute_task_endpoint(
     except Exception as e:
         logger.error(f"Error executing task: {str(e)}")
         if "google authentication required" in str(e).lower():
-            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/google"})
+            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/google"})
         if "notion token not found" in str(e).lower():
-            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'http://localhost:5000')}/auth/notion"})
+            raise HTTPException(status_code=401, detail={'action': 'Requires authentication', 'auth_url': f"{os.getenv('BASE_URL', 'https://backend.data-ai.co')}/auth/notion"})
         raise HTTPException(status_code=500, detail=str(e))

@@ -177,12 +177,15 @@ def auth_google(current_user: User = Depends(get_current_user)):
     logger.info(f"Generated Google OAuth URL: {url}")
     return {"redirect_url": url}
 
+# In auth/auth_routes.py - Update your google_callback function
+
 @router.get("/auth/google/callback")
 def google_callback(request: Request, db: Session = Depends(get_db)):
     code = request.query_params.get("code")
     state = request.query_params.get("state")
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
+    
     try:
         user_id = decode_state_token(state)
     except Exception as e:
@@ -191,11 +194,13 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
     redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+    
     if not client_id or not client_secret or not redirect_uri:
-        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_REDIRECT_URI not configured in environment variables")
+        raise HTTPException(status_code=500, detail="Google OAuth environment variables not configured")
 
-    logger.info(f"Using GOOGLE_REDIRECT_URI for /auth/google/callback: {redirect_uri}")
+    logger.info(f"Using GOOGLE_REDIRECT_URI for callback: {redirect_uri}")
 
+    # Exchange code for tokens
     res = requests.post("https://oauth2.googleapis.com/token", data={
         "code": code,
         "client_id": client_id,
@@ -208,10 +213,30 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
         logger.error(f"Google token exchange failed: {res.status_code} {res.text}")
         raise HTTPException(status_code=500, detail="Google token exchange failed")
 
-    save_tokens(user_id, {"google": res.json()})
+    token_data = res.json()
+    
+    # Ensure we save all required fields
+    google_tokens = {
+        "access_token": token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token"),  # This is crucial!
+        "token_type": token_data.get("token_type", "Bearer"),
+        "scope": token_data.get("scope"),
+    }
+    
+    # Add expiry information if available
+    if "expires_in" in token_data:
+        from datetime import datetime, timedelta
+        expires_at = datetime.utcnow() + timedelta(seconds=int(token_data["expires_in"]))
+        google_tokens["expires_at"] = expires_at.isoformat()
+    
+    # Validate that we got the refresh token
+    if not google_tokens["refresh_token"]:
+        logger.warning(f"No refresh token received for user {user_id}. User may need to re-authorize.")
+    
+    save_tokens(user_id, {"google": google_tokens})
     logger.info(f"Successfully stored Google tokens for user {user_id}")
+    
     return RedirectResponse(url="https://chat.data-ai.co/connect?google=success")
-
 
 # ---- Zoom OAuth ----
 @router.get("/auth/zoom")

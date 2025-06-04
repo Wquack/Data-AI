@@ -22,98 +22,187 @@ SCOPES = [
     'openid'
 ]
 
+# In app/calendar_api.py - Replace your get_calendar_service function
+
+# In app/calendar_api.py - Replace your get_calendar_service function
+
 def get_calendar_service(user_id):
     """Get authenticated Google Calendar service."""
     tokens = load_tokens(user_id)
     google_tokens = tokens.get("google", {})
-    creds = None
-    if "access_token" in google_tokens:
-        creds = Credentials(
-            token=google_tokens["access_token"],
-            refresh_token=google_tokens.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=os.getenv("GOOGLE_CLIENT_ID"),
-            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-            scopes=SCOPES
-        )
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    
+    if not google_tokens or "access_token" not in google_tokens:
+        raise Exception("Google authentication required. Please authenticate via /auth/google")
+    
+    # Get required OAuth credentials from environment
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        raise Exception("Google OAuth credentials not configured in environment")
+    
+    # Create credentials with all required fields
+    creds = Credentials(
+        token=google_tokens["access_token"],
+        refresh_token=google_tokens.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES
+    )
+    
+    # Check if credentials are valid or need refresh
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
             try:
+                logger.info(f"Refreshing Google credentials for user {user_id}")
                 creds.refresh(Request())
-                save_tokens(user_id, {"google": {
+                
+                # Save the refreshed tokens back to storage
+                refreshed_tokens = {
                     "access_token": creds.token,
                     "refresh_token": creds.refresh_token,
-                    "expires_in": (creds.expiry - datetime.utcnow()).seconds if creds.expiry is not None else None
-                }})
-                logger.info(f"Refreshed Google credentials for user {user_id}")
+                }
+                
+                # Add expiry if available
+                if creds.expiry:
+                    refreshed_tokens["expires_at"] = creds.expiry.isoformat()
+                
+                save_tokens(user_id, {"google": refreshed_tokens})
+                logger.info(f"Successfully refreshed and saved Google credentials for user {user_id}")
+                
             except Exception as e:
-                logger.error(f"Error refreshing Google token for user {user_id}: {e}")
-                raise Exception("Failed to refresh Google token")
+                logger.error(f"Failed to refresh Google token for user {user_id}: {e}")
+                raise Exception(f"Failed to refresh Google token. Please re-authenticate via /auth/google. Error: {str(e)}")
         else:
-            raise Exception("Google authentication required")
-    return build('calendar', 'v3', credentials=creds)
+            logger.error(f"Google credentials invalid and no refresh token available for user {user_id}")
+            raise Exception("Google credentials expired and no refresh token available. Please re-authenticate via /auth/google")
+    
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        logger.info(f"Successfully created Google Calendar service for user {user_id}")
+        return service
+    except Exception as e:
+        logger.error(f"Failed to build Google Calendar service for user {user_id}: {e}")
+        raise Exception(f"Failed to create Google Calendar service: {str(e)}")
 
 def get_drive_service(user_id):
     """Get authenticated Google Drive service."""
     tokens = load_tokens(user_id)
     google_tokens = tokens.get("google", {})
-    creds = None
-    if "access_token" in google_tokens:
-        creds = Credentials(
-            token=google_tokens["access_token"],
-            refresh_token=google_tokens.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=os.getenv("GOOGLE_CLIENT_ID"),
-            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-            scopes=SCOPES
-        )
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    
+    if not google_tokens or "access_token" not in google_tokens:
+        raise Exception("Google authentication required. Please authenticate via /auth/google")
+    
+    # Get required OAuth credentials from environment
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        raise Exception("Google OAuth credentials not configured in environment")
+    
+    # Create credentials with all required fields
+    creds = Credentials(
+        token=google_tokens["access_token"],
+        refresh_token=google_tokens.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES
+    )
+    
+    # Check if credentials are valid or need refresh
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
             try:
+                logger.info(f"Refreshing Google credentials for Drive for user {user_id}")
                 creds.refresh(Request())
-                save_tokens(user_id, {"google": {
+                
+                # Save the refreshed tokens back to storage
+                refreshed_tokens = {
                     "access_token": creds.token,
                     "refresh_token": creds.refresh_token,
-                    "expires_in": (creds.expiry - datetime.utcnow()).seconds if creds.expiry is not None else None
-                }})
-                logger.info(f"Refreshed Google credentials for Drive for user {user_id}")
+                }
+                
+                if creds.expiry:
+                    refreshed_tokens["expires_at"] = creds.expiry.isoformat()
+                
+                save_tokens(user_id, {"google": refreshed_tokens})
+                logger.info(f"Successfully refreshed and saved Google credentials for Drive for user {user_id}")
+                
             except Exception as e:
-                logger.error(f"Error refreshing Google token for user {user_id}: {e}")
-                raise Exception("Failed to refresh Google token")
+                logger.error(f"Failed to refresh Google token for Drive for user {user_id}: {e}")
+                raise Exception(f"Failed to refresh Google token. Please re-authenticate via /auth/google. Error: {str(e)}")
         else:
-            raise Exception("Google authentication required")
-    return build('drive', 'v3', credentials=creds)
+            logger.error(f"Google credentials invalid and no refresh token available for Drive for user {user_id}")
+            raise Exception("Google credentials expired and no refresh token available. Please re-authenticate via /auth/google")
+    
+    try:
+        service = build('drive', 'v3', credentials=creds)
+        logger.info(f"Successfully created Google Drive service for user {user_id}")
+        return service
+    except Exception as e:
+        logger.error(f"Failed to build Google Drive service for user {user_id}: {e}")
+        raise Exception(f"Failed to create Google Drive service: {str(e)}")
 
 def get_gmail_service(user_id):
     """Get authenticated Gmail service."""
     tokens = load_tokens(user_id)
     google_tokens = tokens.get("google", {})
-    creds = None
-    if "access_token" in google_tokens:
-        creds = Credentials(
-            token=google_tokens["access_token"],
-            refresh_token=google_tokens.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=os.getenv("GOOGLE_CLIENT_ID"),
-            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-            scopes=SCOPES
-        )
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    
+    if not google_tokens or "access_token" not in google_tokens:
+        raise Exception("Google authentication required. Please authenticate via /auth/google")
+    
+    # Get required OAuth credentials from environment
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        raise Exception("Google OAuth credentials not configured in environment")
+    
+    # Create credentials with all required fields
+    creds = Credentials(
+        token=google_tokens["access_token"],
+        refresh_token=google_tokens.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES
+    )
+    
+    # Check if credentials are valid or need refresh
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
             try:
+                logger.info(f"Refreshing Google credentials for Gmail for user {user_id}")
                 creds.refresh(Request())
-                save_tokens(user_id, {"google": {
+                
+                # Save the refreshed tokens back to storage
+                refreshed_tokens = {
                     "access_token": creds.token,
                     "refresh_token": creds.refresh_token,
-                    "expires_in": (creds.expiry - datetime.utcnow()).seconds if creds.expiry is not None else None
-                }})
-                logger.info(f"Refreshed Google credentials for Gmail for user {user_id}")
+                }
+                
+                if creds.expiry:
+                    refreshed_tokens["expires_at"] = creds.expiry.isoformat()
+                
+                save_tokens(user_id, {"google": refreshed_tokens})
+                logger.info(f"Successfully refreshed and saved Google credentials for Gmail for user {user_id}")
+                
             except Exception as e:
-                logger.error(f"Error refreshing Google token for user {user_id}: {e}")
-                raise Exception("Failed to refresh Google token")
+                logger.error(f"Failed to refresh Google token for Gmail for user {user_id}: {e}")
+                raise Exception(f"Failed to refresh Google token. Please re-authenticate via /auth/google. Error: {str(e)}")
         else:
-            raise Exception("Google authentication required")
-    return build('gmail', 'v1', credentials=creds)
+            logger.error(f"Google credentials invalid and no refresh token available for Gmail for user {user_id}")
+            raise Exception("Google credentials expired and no refresh token available. Please re-authenticate via /auth/google")
+    
+    try:
+        service = build('gmail', 'v1', credentials=creds)
+        logger.info(f"Successfully created Gmail service for user {user_id}")
+        return service
+    except Exception as e:
+        logger.error(f"Failed to build Gmail service for user {user_id}: {e}")
+        raise Exception(f"Failed to create Gmail service: {str(e)}")
 
 def get_auth_url():
     """Get OAuth authorization URL."""
