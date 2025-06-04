@@ -29,6 +29,8 @@ SCOPES = [
 
 # Replace get_calendar_service in app/calendar_api.py with this working version:
 
+# Replace your get_calendar_service() function in app/calendar_api.py with this:
+
 def get_calendar_service(user_id):
     """Get authenticated Google Calendar service."""
     tokens = load_tokens(user_id)
@@ -37,49 +39,51 @@ def get_calendar_service(user_id):
     if not google_tokens or "access_token" not in google_tokens:
         raise Exception("Google authentication required. Please authenticate via /auth/google")
     
-    # Get required OAuth credentials from environment
+    # ✅ CRITICAL FIX: Get OAuth credentials from environment
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
     
     if not client_id or not client_secret:
-        raise Exception("Google OAuth credentials not configured in environment")
+        logger.error(f"Missing Google OAuth credentials - client_id: {bool(client_id)}, client_secret: {bool(client_secret)}")
+        raise Exception("Google OAuth credentials not configured. Please check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.")
     
-    # Create credentials with all required fields
+    logger.info(f"Creating Google credentials for user {user_id}")
+    
+    # ✅ CRITICAL FIX: Create credentials with ALL required fields
     creds = Credentials(
         token=google_tokens["access_token"],
-        refresh_token=google_tokens.get("refresh_token"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret,
+        refresh_token=google_tokens.get("refresh_token"),  # This might be None - that's okay for now
+        token_uri="https://oauth2.googleapis.com/token",   # ← REQUIRED
+        client_id=client_id,                               # ← REQUIRED  
+        client_secret=client_secret,                       # ← REQUIRED
         scopes=SCOPES
     )
     
-    # Check if credentials are valid or need refresh
+    # Check if credentials are valid
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             try:
                 logger.info(f"Refreshing Google credentials for user {user_id}")
                 creds.refresh(Request())
                 
-                # Save the refreshed tokens back to storage
+                # Save refreshed tokens
                 refreshed_tokens = {
                     "access_token": creds.token,
                     "refresh_token": creds.refresh_token,
                 }
                 
-                # Add expiry if available
                 if creds.expiry:
                     refreshed_tokens["expires_at"] = creds.expiry.isoformat()
                 
                 save_tokens(user_id, {"google": refreshed_tokens})
-                logger.info(f"Successfully refreshed and saved Google credentials for user {user_id}")
+                logger.info(f"Successfully refreshed Google credentials for user {user_id}")
                 
             except Exception as e:
                 logger.error(f"Failed to refresh Google token for user {user_id}: {e}")
-                raise Exception(f"Failed to refresh Google token. Please re-authenticate via /auth/google. Error: {str(e)}")
+                raise Exception(f"Google token expired and refresh failed. Please re-authenticate via /auth/google")
         else:
-            logger.error(f"Google credentials invalid and no refresh token available for user {user_id}")
-            raise Exception("Google credentials expired and no refresh token available. Please re-authenticate via /auth/google")
+            logger.warning(f"Google token expired and no refresh token available for user {user_id}")
+            raise Exception("Google token expired. Please re-authenticate via /auth/google")
     
     try:
         service = build('calendar', 'v3', credentials=creds)
@@ -88,6 +92,7 @@ def get_calendar_service(user_id):
     except Exception as e:
         logger.error(f"Failed to build Google Calendar service for user {user_id}: {e}")
         raise Exception(f"Failed to create Google Calendar service: {str(e)}")
+    
 def get_drive_service(user_id):
     """Get authenticated Google Drive service."""
     tokens = load_tokens(user_id)
