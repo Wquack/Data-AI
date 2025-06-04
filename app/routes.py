@@ -510,6 +510,8 @@ def ping():
 
 # In app/routes.py - Replace your existing /chat endpoint
 
+# In app/routes.py - Replace your /chat endpoint with this safer version
+
 @router.post("/chat")
 async def chat_endpoint(request: Request, current_user: User = Depends(get_current_user)):
     try:
@@ -522,35 +524,144 @@ async def chat_endpoint(request: Request, current_user: User = Depends(get_curre
 
         logger.info(f"Processing message for user {user_id}: {message}")
 
-        # Get user's available services
+        # Get user's available services - ADD NULL CHECK
         user_tokens = load_tokens(user_id)
-        services = get_user_services_context(user_tokens or {})
+        if user_tokens is None:
+            user_tokens = {}
         
-        # Use the new enhanced contextual response generator
-        result = generate_contextual_response_enhanced(message, user_id, services)
+        services = get_user_services_context(user_tokens)
+        if services is None:
+            services = {}
         
-        logger.info(f"Generated response for user {user_id}: {result['intent']}")
+        # Try enhanced response first, with fallback
+        try:
+            result = generate_contextual_response_enhanced(message, user_id, services)
+            if result is None:
+                raise Exception("Enhanced response returned None")
+        except Exception as e:
+            logger.error(f"Enhanced response failed for user {user_id}: {str(e)}")
+            # FALLBACK to simple response
+            result = generate_simple_fallback_response(message, services)
+        
+        logger.info(f"Generated response for user {user_id}: {result.get('intent', 'unknown')}")
         
         return {
             "message": message,
-            "intent": result["intent"],
-            "confidence": result["confidence"], 
-            "response": result["response"],
-            "suggestions": result["suggestions"],
+            "intent": result.get("intent", "general"),
+            "confidence": result.get("confidence", 0.5), 
+            "response": result.get("response", "I'm here to help with your productivity tasks."),
+            "suggestions": result.get("suggestions", []),
             "follow_up_questions": result.get("follow_up_questions", []),
-            "notion_pages": []  # Will be populated if needed for specific requests
+            "notion_pages": result.get("notion_pages", [])
         }
         
     except Exception as e:
         logger.error(f"Error in chat processing for user {current_user.id}: {str(e)}")
+        # SAFE FALLBACK RESPONSE
         return {
             "message": message if 'message' in locals() else "",
             "intent": "error",
             "confidence": 0.5,
-            "response": "I encountered an error. Please try rephrasing your request.",
-            "suggestions": [],
-            "follow_up_questions": [],
+            "response": "I can help you check your calendar, emails, or create documents. What would you like to do?",
+            "suggestions": [
+                {
+                    "action": "Check calendar",
+                    "service": "google_calendar",
+                    "description": "View your upcoming events",
+                    "priority": 5
+                }
+            ],
+            "follow_up_questions": ["What would you like me to help you with?"],
             "notion_pages": []
+        }
+
+# Add this fallback function to app/routes.py
+def generate_simple_fallback_response(message: str, services: Dict[str, bool]) -> Dict[str, Any]:
+    """Simple fallback response when enhanced logic fails"""
+    message_lower = message.lower()
+    
+    # Handle calendar requests
+    if any(word in message_lower for word in ["calendar", "events", "schedule"]):
+        if services.get("google_calendar"):
+            return {
+                "response": "I can show you your calendar events!",
+                "suggestions": [{
+                    "action": "Check calendar",
+                    "service": "google_calendar",
+                    "description": "View your upcoming events",
+                    "priority": 5
+                }],
+                "follow_up_questions": ["Would you like to see specific dates?"],
+                "intent": "calendar_request",
+                "confidence": 0.8
+            }
+        else:
+            return {
+                "response": "To view your calendar, please connect your Google Calendar first.",
+                "suggestions": [{
+                    "action": "Connect Google Calendar",
+                    "service": "google_calendar",
+                    "description": "Enable calendar integration",
+                    "priority": 5
+                }],
+                "follow_up_questions": [],
+                "intent": "calendar_not_connected",
+                "confidence": 0.8
+            }
+    
+    # Handle email requests
+    elif any(word in message_lower for word in ["email", "gmail", "inbox"]):
+        if services.get("gmail"):
+            return {
+                "response": "I can help you with your emails!",
+                "suggestions": [{
+                    "action": "List Gmail messages",
+                    "service": "gmail",
+                    "description": "Check your recent emails",
+                    "priority": 5
+                }],
+                "follow_up_questions": ["Would you like to compose a new email?"],
+                "intent": "email_request",
+                "confidence": 0.8
+            }
+        else:
+            return {
+                "response": "To access your emails, please connect your Gmail first.",
+                "suggestions": [{
+                    "action": "Connect Gmail",
+                    "service": "gmail",
+                    "description": "Enable email integration",
+                    "priority": 5
+                }],
+                "follow_up_questions": [],
+                "intent": "email_not_connected",
+                "confidence": 0.8
+            }
+    
+    # Default response
+    else:
+        available_suggestions = []
+        if services.get("google_calendar"):
+            available_suggestions.append({
+                "action": "Check calendar",
+                "service": "google_calendar",
+                "description": "View your upcoming events",
+                "priority": 5
+            })
+        if services.get("gmail"):
+            available_suggestions.append({
+                "action": "List Gmail messages", 
+                "service": "gmail",
+                "description": "Check your recent emails",
+                "priority": 4
+            })
+        
+        return {
+            "response": "I can help you with your calendar, emails, or other productivity tasks. What would you like to do?",
+            "suggestions": available_suggestions[:2],  # Limit to 2 suggestions
+            "follow_up_questions": ["What would you like me to help you with?"],
+            "intent": "general_help",
+            "confidence": 0.7
         }
 
 @router.post('/create_zoom_meeting')
