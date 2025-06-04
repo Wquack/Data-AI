@@ -24,7 +24,7 @@ PRODUCTIVITY_KEYWORDS = [
 
 INAPPROPRIATE_KEYWORDS = [
     "sex", "dating", "relationship", "love", "personal", "private", "intimate",
-    "nsfw", "adult", "inappropriate"
+    "nsfw", "adult", "inappropriate"  "orgy" , "lesbian"
 ]
 
 REJECTION_PATTERNS = [
