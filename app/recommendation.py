@@ -1,10 +1,11 @@
-# app/recommendation.py - Fixed and enhanced version
+# app/recommendation.py - Enhanced with DATA-AI personality while preserving original structure
 
 import logging
 import aiohttp
 import asyncio
 import traceback
 import re
+import random
 from datetime import date, timedelta
 from typing import Dict, List, Any, Optional
 from .mistral_api import call_mistral_api
@@ -32,6 +33,137 @@ REJECTION_PATTERNS = [
     r"i don't want", r"no thanks", r"not interested", r"don't need",
     r"already did", r"not now", r"maybe later", r"skip", r"pass"
 ]
+
+# NEW: DATA-AI Personality Enhancement Layer
+class DataAIPersonalityEnhancer:
+    """Adds personality to existing responses without breaking current logic"""
+    
+    def __init__(self):
+        self.name = "DATA-AI"
+        self.conversation_counts = {}  # Track per user
+    
+    def enhance_greeting(self, user_id: str, original_response: str) -> str:
+        """Enhance greeting responses with DATA-AI personality"""
+        count = self.conversation_counts.get(user_id, 0) + 1
+        self.conversation_counts[user_id] = count
+        
+        if count == 1:
+            # First time greeting
+            greetings = [
+                f"Hey there! 👋 I'm {self.name}, your productivity companion! " + original_response.replace("Hi! I", "I"),
+                f"Hello! ✨ {self.name} here, ready to supercharge your day! " + original_response.replace("Hi! I", "I"),
+                f"Hi! 🌟 {self.name} at your service! " + original_response.replace("Hi! I", "I")
+            ]
+            return random.choice(greetings)
+        else:
+            # Repeat greetings
+            repeat_greetings = [
+                f"Hey again! 😊 {self.name} here - what's next on our productivity adventure?",
+                f"Back for more? 🚀 {self.name} is ready to help you conquer your tasks!",
+                f"Hello again! ⚡ {self.name} here - let's make things happen!",
+                f"Hey there! 🎯 {self.name} ready to boost your productivity!"
+            ]
+            return random.choice(repeat_greetings)
+    
+    def enhance_service_response(self, message: str, original_response: str, intent: str) -> str:
+        """Enhance service-specific responses with emojis and personality"""
+        message_lower = message.lower()
+        
+        # Calendar responses
+        if any(word in message_lower for word in ["calendar", "events", "schedule"]):
+            if "can show you" in original_response:
+                return f"Absolutely! 📅 {self.name} loves helping with calendars! " + original_response.replace("I can show you", "Let me show you")
+            elif "connect your Google Calendar" in original_response:
+                return f"To unleash my calendar superpowers 📅, " + original_response.lower()
+        
+        # Email responses  
+        elif any(word in message_lower for word in ["email", "gmail", "inbox"]):
+            if "can help you with your emails" in original_response:
+                return f"Perfect! 📧 {self.name} is excellent with email management! " + original_response.replace("I can help you", "Let me help you")
+            elif "connect your Gmail" in original_response:
+                return f"To access your email superpowers 📧, " + original_response.lower()
+        
+        # Notion responses
+        elif any(word in message_lower for word in ["notion", "notes", "document"]):
+            if "notion" in original_response.lower():
+                return f"Great choice! 📝 {self.name} loves working with Notion! " + original_response
+        
+        # Default enhancement
+        if original_response.startswith("I can help"):
+            return f"Absolutely! 💡 {self.name} is here to help! " + original_response.replace("I can help", "Let me help")
+        
+        return original_response
+    
+    def enhance_connection_status(self, original_response: str) -> str:
+        """Enhance connection status responses"""
+        if "✅" in original_response:
+            return f"Awesome! 🎉 " + original_response
+        elif "❌" in original_response:
+            return f"No worries! 🔧 " + original_response
+        return original_response
+    
+    def enhance_general_response(self, message: str, original_response: str) -> str:
+        """Add general personality enhancements"""
+        message_lower = message.lower()
+        
+        # Thank you responses
+        if any(word in message_lower for word in ["thank", "thanks"]):
+            return f"You're so welcome! 😊 {self.name} loves helping awesome people like you! ✨"
+        
+        # Positive feedback
+        elif any(word in message_lower for word in ["good", "great", "awesome", "amazing"]):
+            return f"That's fantastic! 🎉 I love your positive energy! How can {self.name} help you keep that momentum going? 💪"
+        
+        # Help requests
+        elif any(phrase in message_lower for phrase in ["help", "what can", "how to"]):
+            if "productivity tasks" in original_response:
+                return original_response.replace("productivity tasks", "productivity tasks with style! ✨")
+        
+        # Add DATA-AI signature to generic responses
+        if original_response.startswith("I can help you with"):
+            return original_response.replace("I can help", f"{self.name} can help")
+        
+        return original_response
+    
+    def detect_service_intent_smart(self, message: str) -> bool:
+        """Smart detection - only suggest services when user explicitly wants them"""
+        message_lower = message.lower()
+        
+        # Service keywords
+        service_words = ["calendar", "email", "gmail", "notion", "slack", "zoom"]
+        # Action keywords  
+        action_words = ["list", "show", "check", "view", "see", "create", "send", "schedule"]
+        
+        has_service = any(service in message_lower for service in service_words)
+        has_action = any(action in message_lower for action in action_words)
+        
+        # Only suggest if user mentions both service AND action
+        return has_service and has_action
+
+# Create global instance
+dataai_enhancer = DataAIPersonalityEnhancer()
+
+# ENHANCED: Add personality to Mistral responses
+def enhance_mistral_response_with_dataai(original_response: str, message: str) -> str:
+    """Add DATA-AI personality to Mistral responses"""
+    message_lower = message.lower()
+    
+    # If Mistral response is too robotic, enhance it
+    if len(original_response) < 50 and not any(emoji in original_response for emoji in ["😊", "👋", "🎯", "✨"]):
+        
+        # Add enthusiasm for positive responses
+        if any(word in original_response.lower() for word in ["great", "good", "excellent"]):
+            return f"That's awesome! 🎉 " + original_response + " How can DATA-AI help you make it even better? ✨"
+        
+        # Add encouragement for challenges
+        elif any(word in original_response.lower() for word in ["difficult", "hard", "challenge"]):
+            return f"I hear you! 💪 " + original_response + " DATA-AI is here to help you tackle this! 🚀"
+        
+        # Add warmth to neutral responses
+        else:
+            return f"Absolutely! 😊 " + original_response + " What's your next move? 🎯"
+    
+    return original_response
 
 class ConversationContext:
     """Track conversation context to avoid repetitive suggestions"""
@@ -343,8 +475,6 @@ def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""
 
     return suggestions
 
-
-
 def detect_sentiment(message, mistral_response=""):
     message_lower = message.lower()
     mistral_lower = mistral_response.lower()
@@ -404,21 +534,17 @@ def generate_contextual_response(message_lower, suggestions, sentiment):
     else:
         return f"To manage this, try to {action_phrase} using {service.capitalize()}."
 
-# === NEW ENHANCED FUNCTIONS ===
-
-# Add this to your recommendation.py - Enhanced connection status handling
-
-# In app/recommendation.py - Update generate_contextual_response_enhanced with better error handling
+# === ENHANCED FUNCTIONS WITH DATA-AI PERSONALITY ===
 
 def generate_contextual_response_enhanced(
     message: str, 
     user_id: str, 
     services: Dict[str, bool]
 ) -> Dict[str, Any]:
-    """Enhanced response generation with conversation context - SAFER VERSION"""
+    """Enhanced version with DATA-AI personality while preserving original structure"""
     
     try:
-        # Validate inputs
+        # Validate inputs (keep your existing validation)
         if not message or not isinstance(message, str):
             message = "help"
         if not user_id or not isinstance(user_id, str):
@@ -433,100 +559,119 @@ def generate_contextual_response_enhanced(
         context.conversation_count += 1
         message_lower = message.lower()
         
-        # 1. Handle connection status questions FIRST
-        if any(phrase in message_lower for phrase in ["connected", "connection", "linked", "authenticated", "auth"]):
-            return handle_connection_status_request(message, services, context)
-        
-        # 2. Handle calendar requests
-        if any(phrase in message_lower for phrase in ["calendar", "events", "schedule"]):
-            if services.get("google_calendar"):
-                return {
-                    "response": "I can show you your calendar events!",
-                    "suggestions": [{
-                        "action": "Check calendar",
-                        "service": "google_calendar",
-                        "description": "View your upcoming events",
-                        "priority": 5
-                    }],
-                    "follow_up_questions": ["Would you like to see specific dates?"],
-                    "intent": "calendar_request",
-                    "confidence": 0.9
-                }
-            else:
-                return {
-                    "response": "To view your calendar, please connect your Google Calendar first.",
-                    "suggestions": [{
-                        "action": "Connect Google Calendar",
-                        "service": "google_calendar",
-                        "description": "Enable calendar integration",
-                        "priority": 5
-                    }],
-                    "follow_up_questions": [],
-                    "intent": "calendar_not_connected",
-                    "confidence": 0.9
-                }
-        
-        # 3. Handle email requests
-        elif any(phrase in message_lower for phrase in ["email", "gmail", "inbox", "messages"]):
-            if services.get("gmail"):
-                return {
-                    "response": "I can help you with your emails!",
-                    "suggestions": [{
-                        "action": "List Gmail messages",
-                        "service": "gmail",
-                        "description": "Check your recent emails",
-                        "priority": 5
-                    }],
-                    "follow_up_questions": ["Would you like to compose a new email?"],
-                    "intent": "email_request",
-                    "confidence": 0.9
-                }
-            else:
-                return {
-                    "response": "To access your emails, please connect your Gmail first.",
-                    "suggestions": [{
-                        "action": "Connect Gmail",
-                        "service": "gmail", 
-                        "description": "Enable email integration",
-                        "priority": 5
-                    }],
-                    "follow_up_questions": [],
-                    "intent": "email_not_connected",
-                    "confidence": 0.9
-                }
-        
-        # 4. Handle greetings
-        elif any(word in message_lower for word in ["hi", "hello", "hey"]):
+        # 1. Handle greetings with DATA-AI personality
+        if any(word in message_lower for word in ["hi", "hello", "hey", "sup"]):
+            original_response = "Hi! I can help you with your calendar, emails, and productivity tasks. What would you like to do?"
+            enhanced_response = dataai_enhancer.enhance_greeting(user_id, original_response)
+            
+            # Only suggest services if user asks specifically
+            suggestions = []
+            if dataai_enhancer.detect_service_intent_smart(message):
+                suggestions = generate_safe_suggestions(services)
+            
             return {
-                "response": "Hi! I can help you with your calendar, emails, and productivity tasks. What would you like to do?",
-                "suggestions": generate_safe_suggestions(services),
-                "follow_up_questions": ["What's your main priority right now?"],
+                "response": enhanced_response,
+                "suggestions": suggestions,
+                "follow_up_questions": ["What's your main priority today? 🎯"],
                 "intent": "greeting",
                 "confidence": 0.9
             }
         
-        # 5. Default response
+        # 2. Handle connection status questions
+        elif any(phrase in message_lower for phrase in ["connected", "connection", "linked", "authenticated"]):
+            # Use your existing logic
+            original_result = handle_connection_status_request(message, services, context)
+            original_result["response"] = dataai_enhancer.enhance_connection_status(original_result["response"])
+            return original_result
+        
+        # 3. Handle explicit service requests (when user wants them)
+        elif dataai_enhancer.detect_service_intent_smart(message):
+            # Calendar requests
+            if any(phrase in message_lower for phrase in ["calendar", "events", "schedule"]):
+                if services.get("google_calendar"):
+                    original_response = "I can show you your calendar events!"
+                    enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "calendar")
+                    return {
+                        "response": enhanced_response,
+                        "suggestions": [{
+                            "action": "Check calendar",
+                            "service": "google_calendar",
+                            "description": "View your upcoming events 📅",
+                            "priority": 5
+                        }],
+                        "follow_up_questions": ["Would you like to see specific dates? 📆"],
+                        "intent": "calendar_request",
+                        "confidence": 0.9
+                    }
+                else:
+                    original_response = "To view your calendar, please connect your Google Calendar first."
+                    enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "calendar")
+                    return {
+                        "response": enhanced_response,
+                        "suggestions": [{
+                            "action": "Connect Google Calendar",
+                            "service": "google_calendar",
+                            "description": "Enable calendar integration 🔗",
+                            "priority": 5
+                        }],
+                        "follow_up_questions": [],
+                        "intent": "calendar_not_connected",
+                        "confidence": 0.9
+                    }
+            
+            # Email requests
+            elif any(phrase in message_lower for phrase in ["email", "gmail", "inbox"]):
+                if services.get("gmail"):
+                    original_response = "I can help you with your emails!"
+                    enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "email")
+                    return {
+                        "response": enhanced_response,
+                        "suggestions": [{
+                            "action": "List Gmail messages",
+                            "service": "gmail",
+                            "description": "Check your recent emails 📧",
+                            "priority": 5
+                        }],
+                        "follow_up_questions": ["Would you like to compose a new email? ✍️"],
+                        "intent": "email_request",
+                        "confidence": 0.9
+                    }
+                else:
+                    original_response = "To access your emails, please connect your Gmail first."
+                    enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "email")
+                    return {
+                        "response": enhanced_response,
+                        "suggestions": [{
+                            "action": "Connect Gmail",
+                            "service": "gmail",
+                            "description": "Enable email integration 🔗",
+                            "priority": 5
+                        }],
+                        "follow_up_questions": [],
+                        "intent": "email_not_connected",
+                        "confidence": 0.9
+                    }
+        
+        # 4. Handle casual conversation (NO service suggestions)
         else:
+            original_response = "I can help you with your calendar, emails, or other productivity tasks. What would you like to do?"
+            enhanced_response = dataai_enhancer.enhance_general_response(message, original_response)
+            
             return {
-                "response": "I can help you with your calendar, emails, or other productivity tasks. What would you like to do?",
-                "suggestions": generate_safe_suggestions(services),
-                "follow_up_questions": ["What would you like me to help you with?"],
+                "response": enhanced_response,
+                "suggestions": [],  # NO automatic suggestions for casual chat
+                "follow_up_questions": ["What would you like me to help you with? 💡"],
                 "intent": "general_help",
                 "confidence": 0.7
             }
             
     except Exception as e:
         logger.error(f"Error in generate_contextual_response_enhanced: {str(e)}")
-        # Return safe fallback
+        # Safe fallback with DATA-AI personality
         return {
-            "response": "I can help you with your productivity tasks. What would you like to do?",
-            "suggestions": [{
-                "action": "Check calendar",
-                "service": "google_calendar",
-                "description": "View your events",
-                "priority": 5
-            }],
-            "follow_up_questions": ["How can I assist you?"],
+            "response": f"Oops! 😅 {dataai_enhancer.name} had a tiny hiccup there. I'm still here and ready to help though! What can I do for you? 💪",
+            "suggestions": [],
+            "follow_up_questions": ["How can I assist you today? ✨"],
             "intent": "fallback",
             "confidence": 0.5
         }
@@ -674,6 +819,7 @@ def generate_service_suggestions(service_key: str, context: ConversationContext)
         }]
     else:
         return []
+
 def generate_fresh_suggestions(
     services: Dict[str, bool], 
     context: ConversationContext,
@@ -1018,7 +1164,7 @@ def handle_calendar_events_request(message: str, services: Dict[str, bool], cont
 # === PRESERVED EXISTING CHAT FUNCTIONS ===
 
 async def chat_with_mistral(message, user_id):
-    # Your existing chat_with_mistral function remains unchanged
+    # Your existing chat_with_mistral function with DATA-AI enhancement
     response = None
     mistral_response = "I couldn't process the request due to an error."
     suggestions = []
@@ -1027,7 +1173,7 @@ async def chat_with_mistral(message, user_id):
 
     try:
         messages = [
-            {"role": "system", "content": "You are a helpful productivity assistant. Analyze the user's message, determine their sentiment (positive or negative), and provide a conversational response with actionable suggestions to improve their productivity. Suggestions should involve services like Google Calendar, Notion, Gmail, or Slack."},
+            {"role": "system", "content": "You are DATA-AI, a helpful and cheerful productivity assistant. Analyze the user's message, determine their sentiment (positive or negative), and provide a conversational response with actionable suggestions to improve their productivity. Add appropriate emojis and maintain an enthusiastic tone. Suggestions should involve services like Google Calendar, Notion, Gmail, or Slack."},
             {"role": "user", "content": message}
         ]
 
@@ -1099,8 +1245,10 @@ async def chat_with_mistral(message, user_id):
         notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
 
         crisp_response = extract_crisp_response(mistral_response, sentiment)
+        # ENHANCED: Add DATA-AI personality to Mistral response
+        enhanced_mistral = enhance_mistral_response_with_dataai(mistral_response, message)
         contextual_response = generate_contextual_response(message_lower, suggestions, sentiment)
-        final_response = f"{crisp_response} {contextual_response}"
+        final_response = f"{enhanced_mistral} {contextual_response}"
 
         return {
             "message": message,
@@ -1112,7 +1260,7 @@ async def chat_with_mistral(message, user_id):
         }
     except Exception as e:
         logger.error(f"Error in chat_with_mistral for user {user_id}: {str(e)}\n{traceback.format_exc()}")
-        # Fallback logic
+        # Fallback logic with DATA-AI personality
         suggestions = generate_action_suggestions(message)
         try:
             notion_pages = await fetch_notion_pages(user_id=user_id) if any(s["service"] == "notion" for s in suggestions) else []
@@ -1133,7 +1281,7 @@ async def chat_with_mistral(message, user_id):
         except Exception as e:
             logger.error(f"Error generating sentiment-based suggestions in fallback for user {user_id}: {str(e)}\n{traceback.format_exc()}")
 
-        crisp_response = extract_crisp_response("Sorry, I couldn't process your request right now.", sentiment)
+        crisp_response = f"Oops! 😅 DATA-AI had a small hiccup, but I'm still here to help! 💪"
         contextual_response = generate_contextual_response(message_lower, suggestions, sentiment)
         final_response = f"{crisp_response} {contextual_response}"
 
@@ -1218,7 +1366,7 @@ async def process_user_message(message, user_id):
 
             if updates:
                 response = "\n\n".join(updates)
-                response += "\n\nRemember, it's always a good idea to check your Gmail inbox for any last-minute updates or changes. If you need help managing your tasks or scheduling, feel free to ask. I'm here to assist you!"
+                response += "\n\nRemember, it's always a good idea to check your Gmail inbox for any last-minute updates or changes. If you need help managing your tasks or scheduling, feel free to ask. DATA-AI is here to assist you! 🚀"
             else:
                 response = f"No updates found for {date_range}."
 
