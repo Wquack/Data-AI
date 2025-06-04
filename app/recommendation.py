@@ -343,6 +343,8 @@ def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""
 
     return suggestions
 
+
+
 def detect_sentiment(message, mistral_response=""):
     message_lower = message.lower()
     mistral_lower = mistral_response.lower()
@@ -404,6 +406,8 @@ def generate_contextual_response(message_lower, suggestions, sentiment):
 
 # === NEW ENHANCED FUNCTIONS ===
 
+# Add this to your recommendation.py - Enhanced connection status handling
+
 def generate_contextual_response_enhanced(
     message: str, 
     user_id: str, 
@@ -415,7 +419,11 @@ def generate_contextual_response_enhanced(
     context.conversation_count += 1
     message_lower = message.lower()
     
-    # 1. Check if message is inappropriate or off-topic
+    # 1. NEW: Handle connection status questions FIRST
+    if any(phrase in message_lower for phrase in ["connected", "connection", "linked", "authenticated", "auth"]):
+        return handle_connection_status_request(message, services, context)
+    
+    # 2. Check if message is inappropriate or off-topic
     if not is_productivity_related(message):
         return {
             "response": "I'm here to help with your productivity and work tasks. How can I assist you with scheduling, organizing, or managing your work?",
@@ -425,7 +433,11 @@ def generate_contextual_response_enhanced(
             "confidence": 0.9
         }
     
-    # 2. Handle rejections
+    # 3. NEW: Handle user frustration/complaints
+    if any(phrase in message_lower for phrase in ["not what i asked", "repeating", "same thing", "unhelpful", "wrong answer"]):
+        return handle_user_frustration(message, services, context)
+    
+    # 4. Handle rejections
     if detect_rejection(message):
         rejected_service = extract_rejected_service(message)
         if rejected_service:
@@ -439,54 +451,130 @@ def generate_contextual_response_enhanced(
             "confidence": 0.9
         }
     
-    # 3. Handle greetings without overwhelming suggestions
-    greeting_words = ["hi", "hello", "hey", "good morning", "good afternoon"]
-    if any(word in message_lower for word in greeting_words) and len(message.split()) <= 3:
+    # Rest of your existing logic...
+    # (keeping the existing code structure)
+
+# NEW: Add these handler functions
+
+def handle_connection_status_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+    """Handle questions about service connection status"""
+    message_lower = message.lower()
+    
+    # Determine which service they're asking about
+    if any(word in message_lower for word in ["calendar", "google calendar"]):
+        service_name = "Google Calendar"
+        service_key = "google_calendar"
+        auth_url = "/auth/google"
+    elif any(word in message_lower for word in ["gmail", "email"]):
+        service_name = "Gmail"
+        service_key = "gmail" 
+        auth_url = "/auth/google"
+    elif any(word in message_lower for word in ["notion"]):
+        service_name = "Notion"
+        service_key = "notion"
+        auth_url = "/auth/notion"
+    elif any(word in message_lower for word in ["slack"]):
+        service_name = "Slack"
+        service_key = "slack"
+        auth_url = "/auth/slack"
+    elif any(word in message_lower for word in ["zoom"]):
+        service_name = "Zoom"
+        service_key = "zoom"
+        auth_url = "/auth/zoom"
+    else:
+        # General connection status
+        connected_services = [name for name, connected in services.items() if connected]
+        if connected_services:
+            service_list = ", ".join(connected_services).replace("_", " ").title()
+            return {
+                "response": f"✅ You have these services connected: {service_list}. What would you like to do with them?",
+                "suggestions": generate_fresh_suggestions(services, context, max_suggestions=3),
+                "follow_up_questions": ["Which service would you like to use?"],
+                "intent": "connection_status_general",
+                "confidence": 0.9
+            }
+        else:
+            return {
+                "response": "❌ No services are connected yet. Would you like to connect a service?",
+                "suggestions": [
+                    {"action": "Connect Google Calendar", "service": "google_calendar", "description": "Connect your calendar", "priority": 5},
+                    {"action": "Connect Gmail", "service": "gmail", "description": "Connect your email", "priority": 4},
+                    {"action": "Connect Notion", "service": "notion", "description": "Connect your workspace", "priority": 3}
+                ],
+                "follow_up_questions": ["Which service would you like to connect first?"],
+                "intent": "connection_status_none",
+                "confidence": 0.9
+            }
+    
+    # Check specific service status
+    if services.get(service_key):
         return {
-            "response": "Hi! I'm here to help with your work and productivity. What would you like to focus on today?",
-            "suggestions": generate_minimal_suggestions(services, context),
-            "follow_up_questions": ["What's your main priority right now?"],
-            "intent": "greeting",
+            "response": f"✅ Yes! Your {service_name} is connected and ready to use. What would you like to do?",
+            "suggestions": generate_service_suggestions(service_key, context),
+            "follow_up_questions": [f"Would you like me to show your {service_name.lower()} data?"],
+            "intent": f"connection_status_{service_key}",
             "confidence": 0.9
         }
-    
-    # 4. Handle specific productivity requests
-    if "meeting" in message_lower or "schedule" in message_lower:
-        context.last_intent = "schedule_meeting"
-        return handle_scheduling_request(message, services, context)
-    
-    elif any(phrase in message_lower for phrase in ["email", "gmail", "inbox", "messages"]):
-        context.last_intent = "email_management"
-        return handle_email_management_request(message, services, context)
-    
-    elif "note" in message_lower or "document" in message_lower:
-        context.last_intent = "create_document"
-        return handle_document_request(message, services, context)
-    
-    # 5. Handle Notion pages requests
-    elif any(phrase in message_lower for phrase in ["list notion pages", "show notion pages", "notion pages", "my notion pages", "view notion"]):
-        context.last_intent = "list_notion_pages"
-        return handle_notion_pages_request(message, services, context)
-    
-    # 6. Handle calendar events requests  
-    elif any(phrase in message_lower for phrase in ["list calendar", "show calendar", "calendar events", "my events", "check calendar"]):
-        context.last_intent = "list_calendar_events"
-        return handle_calendar_events_request(message, services, context)
-    
-    # 7. Handle Slack requests
-    elif any(phrase in message_lower for phrase in ["slack", "channels", "team chat", "post message"]):
-        context.last_intent = "slack_management"
-        return handle_slack_management_request(message, services, context)
-    
-    # 8. Default helpful response
+    else:
+        return {
+            "response": f"❌ No, your {service_name} isn't connected yet. Would you like me to help you connect it?",
+            "suggestions": [{
+                "action": f"Connect {service_name}",
+                "service": service_key,
+                "description": f"Connect your {service_name} account",
+                "priority": 5
+            }],
+            "follow_up_questions": [],
+            "intent": f"connection_status_{service_key}_not_connected",
+            "confidence": 0.9
+        }
+
+def handle_user_frustration(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+    """Handle when user expresses frustration with responses"""
     return {
-        "response": "I can help you with scheduling meetings, sending emails, creating documents, or organizing your tasks. What would you like to work on?",
-        "suggestions": generate_fresh_suggestions(services, context, max_suggestions=2),
-        "follow_up_questions": ["What's the most important task on your agenda?"],
-        "intent": "general_help",
-        "confidence": 0.7
+        "response": "I apologize for the confusion! Let me be more helpful. What specific question can I answer for you?",
+        "suggestions": [
+            {"action": "Check calendar", "service": "google_calendar", "description": "View your events", "priority": 5},
+            {"action": "List Gmail messages", "service": "gmail", "description": "Check your emails", "priority": 4},
+            {"action": "List Notion pages", "service": "notion", "description": "View your notes", "priority": 3}
+        ],
+        "follow_up_questions": ["What specific information do you need?", "How can I better assist you?"],
+        "intent": "user_frustration",
+        "confidence": 0.9
     }
 
+def generate_service_suggestions(service_key: str, context: ConversationContext) -> List[Dict]:
+    """Generate suggestions for a specific connected service"""
+    if service_key == "google_calendar":
+        return [{
+            "action": "Check calendar",
+            "service": "google_calendar",
+            "description": "View your upcoming events",
+            "priority": 5
+        }]
+    elif service_key == "gmail":
+        return [{
+            "action": "List Gmail messages",
+            "service": "gmail", 
+            "description": "Check your recent emails",
+            "priority": 5
+        }]
+    elif service_key == "notion":
+        return [{
+            "action": "List Notion pages",
+            "service": "notion",
+            "description": "View your workspace",
+            "priority": 5
+        }]
+    elif service_key == "slack":
+        return [{
+            "action": "List Slack channels",
+            "service": "slack",
+            "description": "View your channels", 
+            "priority": 5
+        }]
+    else:
+        return []
 def generate_fresh_suggestions(
     services: Dict[str, bool], 
     context: ConversationContext,
