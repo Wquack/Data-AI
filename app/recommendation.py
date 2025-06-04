@@ -1,4 +1,4 @@
-# app/recommendation.py - Enhanced version with existing functions preserved
+# app/recommendation.py - Complete fixed version
 
 import logging
 import aiohttp
@@ -705,9 +705,130 @@ async def chat_with_mistral(message, user_id):
         }
     except Exception as e:
         logger.error(f"Error in chat_with_mistral for user {user_id}: {str(e)}\n{traceback.format_exc()}")
-        # Fallback logic remains the same...
+        # Fallback logic
         suggestions = generate_action_suggestions(message)
         try:
             notion_pages = await fetch_notion_pages(user_id=user_id) if any(s["service"] == "notion" for s in suggestions) else []
         except Exception as e:
-            logger.error(f"Error fetching Notion pages in fallback for user {user_i
+            logger.error(f"Error fetching Notion pages in fallback for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+            notion_pages = []
+
+        if not isinstance(notion_pages, list):
+            logger.warning(f"notion_pages is not a list in fallback for user {user_id}: {notion_pages}")
+            notion_pages = []
+        notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
+
+        sentiment = detect_sentiment(message)
+        confidence = 0.9
+
+        try:
+            suggestions = generate_sentiment_based_suggestions(message, sentiment)
+        except Exception as e:
+            logger.error(f"Error generating sentiment-based suggestions in fallback for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+
+        crisp_response = extract_crisp_response("Sorry, I couldn't process your request right now.", sentiment)
+        contextual_response = generate_contextual_response(message_lower, suggestions, sentiment)
+        final_response = f"{crisp_response} {contextual_response}"
+
+        return {
+            "message": message,
+            "sentiment": sentiment,
+            "confidence": confidence,
+            "response": final_response,
+            "suggestions": suggestions,
+            "notion_pages": notion_page_options
+        }
+
+async def process_user_message(message, user_id):
+    """Process user message and return structured response (PRESERVED FUNCTION)"""
+    try:
+        message_lower = message.lower()
+        updates = []
+
+        start_date = None
+        end_date = None
+        if "today's events" in message_lower or "what are my events today" in message_lower:
+            start_date = date.today().strftime('%Y-%m-%d')
+            end_date = start_date
+            date_range = "today"
+        elif "tomorrow" in message_lower:
+            tomorrow = date.today() + timedelta(days=1)
+            start_date = tomorrow.strftime('%Y-%m-%d')
+            end_date = start_date
+            date_range = "tomorrow"
+        elif "all the available events" in message_lower:
+            start_date = date.today().strftime('%Y-%m-%d')
+            end_date = (date.today() + timedelta(days=30)).strftime('%Y-%m-%d')
+            date_range = "the next 30 days"
+        else:
+            date_range = "tomorrow"
+
+        if "updates" in message_lower or "events" in message_lower:
+            start_time = asyncio.get_event_loop().time()
+            events_result = await fetch_calendar_events(start_date, end_date, user_id=user_id)
+            end_time = asyncio.get_event_loop().time()
+            logger.info(f"fetch_calendar_events completed in {end_time - start_time:.2f} seconds for user {user_id}")
+
+            if isinstance(events_result, dict) and events_result.get("requires_auth"):
+                return {
+                    "response": "Authentication required to access Google Calendar.",
+                    "requires_auth": True,
+                    "auth_url": events_result["auth_url"]
+                }
+            events = events_result
+            suggestions = []
+            if events:
+                response = f"Here's a summary of your updates for {date_range}:\n\n"
+                for idx, event in enumerate(events, 1):
+                    event_summary = event["summary"].strip()
+                    start_time = event["start"]
+                    updates.append(f"{idx}. Meeting: {event_summary} at {start_time}. You can join the meeting via this Zoom link.")
+                    event_suggestions = generate_action_suggestions(event_summary)
+                    for suggestion in event_suggestions:
+                        suggestion["event_summary"] = event_summary
+                        suggestion["calendar_link"] = event["link"]
+                    suggestions.extend(event_suggestions)
+            else:
+                updates.append(f"No calendar events found for {date_range}.")
+
+            start_time = asyncio.get_event_loop().time()
+            notion_tasks = await fetch_notion_tasks(user_id=user_id)
+            end_time = asyncio.get_event_loop().time()
+            logger.info(f"fetch_notion_tasks completed in {end_time - start_time:.2f} seconds for user {user_id}")
+
+            if notion_tasks:
+                for idx, task in enumerate(notion_tasks, len(updates) + 1):
+                    updates.append(f"{idx}. In Notion, there's a task assigned to you for {task['title']}. You can find the details in the \"{task['section']}\" section.")
+
+            start_time = asyncio.get_event_loop().time()
+            drive_deadlines = await fetch_drive_deadlines(user_id=user_id)
+            end_time = asyncio.get_event_loop().time()
+            logger.info(f"fetch_drive_deadlines completed in {end_time - start_time:.2f} seconds for user {user_id}")
+
+            if drive_deadlines:
+                for idx, deadline in enumerate(drive_deadlines, len(updates) + 1):
+                    updates.append(f"{idx}. Don't forget about the deadline for {deadline['title']}. You can work on it in the Google Drive folder labeled '{deadline['folder']}'.")
+
+            if updates:
+                response = "\n\n".join(updates)
+                response += "\n\nRemember, it's always a good idea to check your Gmail inbox for any last-minute updates or changes. If you need help managing your tasks or scheduling, feel free to ask. I'm here to assist you!"
+            else:
+                response = f"No updates found for {date_range}."
+
+            notion_pages = await fetch_notion_pages(user_id=user_id) if any(s["service"] == "notion" for s in suggestions) else []
+            if not isinstance(notion_pages, list):
+                logger.warning(f"notion_pages is not a list in process_user_message for user {user_id}: {notion_pages}")
+                notion_pages = []
+            notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
+
+            return {
+                "response": response.strip(),
+                "suggestions": suggestions,
+                "notion_pages": notion_page_options if suggestions else []
+            }
+
+        else:
+            return await chat_with_mistral(message, user_id)
+    except Exception as e:
+        logger.error(f"Error processing user message for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+        raise

@@ -1,3 +1,5 @@
+# In app/routes.py - Replace the import section at the top
+
 import sys
 import os
 import json
@@ -19,7 +21,14 @@ from utils.db import get_db
 from utils.token_store import load_tokens
 from auth.auth_routes import get_current_user
 from utils.jwt_utils import generate_state_token, decode_state_token
-from .recommendation import process_user_message, chat_with_mistral
+
+# Updated imports - use the new enhanced function
+from .recommendation import (
+    process_user_message, 
+    chat_with_mistral, 
+    generate_contextual_response_enhanced  # ← Add this new import
+)
+
 from .calendar_api import create_calendar_event, list_calendar_events, upload_to_drive, send_gmail, create_calendar_event_with_zoom
 from .encryption import encrypt_data
 from .mistral_api import call_mistral_api
@@ -27,7 +36,6 @@ from .slack_oauth import get_slack_auth_url, handle_slack_callback, post_to_slac
 from .zoom_oauth import get_zoom_auth_url, handle_zoom_callback, refresh_zoom_token
 from .notion_api import create_notion_page, list_notion_pages
 from .powerpoint_api import create_powerpoint_slides
-
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -461,6 +469,8 @@ def ping():
 
 # In app/routes.py - Replace your existing /chat endpoint with this:
 
+# In app/routes.py - Replace your existing /chat endpoint
+
 @router.post("/chat")
 async def chat_endpoint(request: Request, current_user: User = Depends(get_current_user)):
     try:
@@ -478,8 +488,6 @@ async def chat_endpoint(request: Request, current_user: User = Depends(get_curre
         services = get_user_services_context(user_tokens or {})
         
         # Use the new enhanced contextual response generator
-        from .recommendation import generate_contextual_response_enhanced
-        
         result = generate_contextual_response_enhanced(message, user_id, services)
         
         logger.info(f"Generated response for user {user_id}: {result['intent']}")
@@ -497,7 +505,7 @@ async def chat_endpoint(request: Request, current_user: User = Depends(get_curre
     except Exception as e:
         logger.error(f"Error in chat processing for user {current_user.id}: {str(e)}")
         return {
-            "message": message,
+            "message": message if 'message' in locals() else "",
             "intent": "error",
             "confidence": 0.5,
             "response": "I encountered an error. Please try rephrasing your request.",
