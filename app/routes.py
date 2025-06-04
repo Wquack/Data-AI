@@ -619,7 +619,7 @@ async def list_drive_deadlines_endpoint(request: Request, current_user: User = D
         logger.error(f"Error listing Google Drive deadlines: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
+@router.get('/list_calendar_events')
 @router.post('/list_calendar_events')
 async def list_calendar_events_endpoint(request: Request, current_user: User = Depends(get_current_user)):
     try:
