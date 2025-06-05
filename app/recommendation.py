@@ -1,5 +1,5 @@
-# app/recommendation.py - Enhanced with DATA-AI personality while preserving original structure
 
+# app/recommendation.py - Enhanced with DATA-AI personality while preserving original structure
 import logging
 import aiohttp
 import asyncio
@@ -17,21 +17,20 @@ notion_pages_cache = TTLCache(maxsize=100, ttl=300)
 
 # Enhanced context-aware additions
 PRODUCTIVITY_KEYWORDS = [
-    "meeting", "schedule", "calendar", "email", "task", "project", "deadline", 
+    "meeting", "schedule", "calendar", "email", "task", "project", "deadline",
     "work", "office", "team", "collaboration", "planning", "organize", "remind",
     "appointment", "event", "zoom", "slack", "notion", "document", "note",
     "productivity", "manage", "time", "busy", "focus", "goal", "priority"
 ]
 
-# FIXED: Added missing comma after "inappropriate"
 INAPPROPRIATE_KEYWORDS = [
     "sex", "dating", "relationship", "love", "personal", "private", "intimate",
     "nsfw", "adult", "inappropriate", "orgy", "lesbian"
 ]
 
 REJECTION_PATTERNS = [
-    r"i don't want", r"no thanks", r"not interested", r"don't need",
-    r"already did", r"not now", r"maybe later", r"skip", r"pass"
+    r"i don\'t want\b", r"no thanks\b", r"not interested\b", r"don\'t need\b",
+    r"already did\b", r"not now\b", r"maybe later\b", r"\bskip\b", r"\bpass\b"
 ]
 
 # NEW: DATA-AI Personality Enhancement Layer
@@ -40,7 +39,7 @@ class DataAIPersonalityEnhancer:
     
     def __init__(self):
         self.name = "DATA-AI"
-        self.conversation_counts = {}  # Track per user
+        self.conversation_counts: Dict[str, int] = {}
     
     def enhance_greeting(self, user_id: str, original_response: str) -> str:
         """Enhance greeting responses with DATA-AI personality"""
@@ -48,7 +47,6 @@ class DataAIPersonalityEnhancer:
         self.conversation_counts[user_id] = count
         
         if count == 1:
-            # First time greeting
             greetings = [
                 f"Hey there! 👋 I'm {self.name}, your productivity companion! " + original_response.replace("Hi! I", "I"),
                 f"Hello! ✨ {self.name} here, ready to supercharge your day! " + original_response.replace("Hi! I", "I"),
@@ -56,7 +54,6 @@ class DataAIPersonalityEnhancer:
             ]
             return random.choice(greetings)
         else:
-            # Repeat greetings
             repeat_greetings = [
                 f"Hey again! 😊 {self.name} here - what's next on our productivity adventure?",
                 f"Back for more? 🚀 {self.name} is ready to help you conquer your tasks!",
@@ -69,26 +66,22 @@ class DataAIPersonalityEnhancer:
         """Enhance service-specific responses with emojis and personality"""
         message_lower = message.lower()
         
-        # Calendar responses
-        if any(word in message_lower for word in ["calendar", "events", "schedule"]):
+        if any(word in message_lower for word in ["calendar", "events", "schedule", "upcoming"]):
             if "can show you" in original_response:
                 return f"Absolutely! 📅 {self.name} loves helping with calendars! " + original_response.replace("I can show you", "Let me show you")
             elif "connect your Google Calendar" in original_response:
                 return f"To unleash my calendar superpowers 📅, " + original_response.lower()
         
-        # Email responses  
-        elif any(word in message_lower for word in ["email", "gmail", "inbox"]):
+        elif any(word in message_lower for word in ["email", "gmail", "inbox", "messages"]):
             if "can help you with your emails" in original_response:
                 return f"Perfect! 📧 {self.name} is excellent with email management! " + original_response.replace("I can help you", "Let me help you")
             elif "connect your Gmail" in original_response:
                 return f"To access your email superpowers 📧, " + original_response.lower()
         
-        # Notion responses
-        elif any(word in message_lower for word in ["notion", "notes", "document"]):
+        elif any(word in message_lower for word in ["notion", "notes", "document", "page"]):
             if "notion" in original_response.lower():
                 return f"Great choice! 📝 {self.name} loves working with Notion! " + original_response
         
-        # Default enhancement
         if original_response.startswith("I can help"):
             return f"Absolutely! 💡 {self.name} is here to help! " + original_response.replace("I can help", "Let me help")
         
@@ -106,20 +99,16 @@ class DataAIPersonalityEnhancer:
         """Add general personality enhancements"""
         message_lower = message.lower()
         
-        # Thank you responses
         if any(word in message_lower for word in ["thank", "thanks"]):
             return f"You're so welcome! 😊 {self.name} loves helping awesome people like you! ✨"
         
-        # Positive feedback
         elif any(word in message_lower for word in ["good", "great", "awesome", "amazing"]):
             return f"That's fantastic! 🎉 I love your positive energy! How can {self.name} help you keep that momentum going? 💪"
         
-        # Help requests
         elif any(phrase in message_lower for phrase in ["help", "what can", "how to"]):
             if "productivity tasks" in original_response:
                 return original_response.replace("productivity tasks", "productivity tasks with style! ✨")
         
-        # Add DATA-AI signature to generic responses
         if original_response.startswith("I can help you with"):
             return original_response.replace("I can help", f"{self.name} can help")
         
@@ -129,37 +118,50 @@ class DataAIPersonalityEnhancer:
         """Smart detection - only suggest services when user explicitly wants them"""
         message_lower = message.lower()
         
-        # Service keywords
-        service_words = ["calendar", "email", "gmail", "notion", "slack", "zoom"]
-        # Action keywords  
-        action_words = ["list", "show", "check", "view", "see", "create", "send", "schedule"]
+        service_words = [
+            "calendar", "events", "schedule", "meeting", "appointment", "upcoming",
+            "email", "gmail", "inbox", "message", "mail", "messages",
+            "notion", "notes", "document", "page", "write", "create",
+            "slack", "team", "channel", "post",
+            "zoom", "video call", "meeting link"
+        ]
+        
+        action_words = [
+            "list", "show", "check", "view", "see", "get", "find",
+            "create", "make", "send", "schedule", "want", "need",
+            "help", "assist", "display", "fetch", "retrieve", "access"
+        ]
         
         has_service = any(service in message_lower for service in service_words)
         has_action = any(action in message_lower for action in action_words)
         
-        # Only suggest if user mentions both service AND action
-        return has_service and has_action
+        calendar_phrases = [
+            "upcoming events", "my events", "calendar events", "what's on my calendar",
+            "show events", "see events", "check calendar", "view calendar"
+        ]
+        
+        email_phrases = [
+            "check email", "see emails", "inbox", "recent emails", "gmail messages",
+            "show messages", "email list"
+        ]
+        
+        has_calendar_phrase = any(phrase in message_lower for phrase in calendar_phrases)
+        has_email_phrase = any(phrase in message_lower for phrase in email_phrases)
+        
+        return (has_service and has_action) or has_calendar_phrase or has_email_phrase
 
 # Create global instance
 dataai_enhancer = DataAIPersonalityEnhancer()
 
-# ENHANCED: Add personality to Mistral responses
 def enhance_mistral_response_with_dataai(original_response: str, message: str) -> str:
     """Add DATA-AI personality to Mistral responses"""
     message_lower = message.lower()
     
-    # If Mistral response is too robotic, enhance it
     if len(original_response) < 50 and not any(emoji in original_response for emoji in ["😊", "👋", "🎯", "✨"]):
-        
-        # Add enthusiasm for positive responses
         if any(word in original_response.lower() for word in ["great", "good", "excellent"]):
             return f"That's awesome! 🎉 " + original_response + " How can DATA-AI help you make it even better? ✨"
-        
-        # Add encouragement for challenges
         elif any(word in original_response.lower() for word in ["difficult", "hard", "challenge"]):
             return f"I hear you! 💪 " + original_response + " DATA-AI is here to help you tackle this! 🚀"
-        
-        # Add warmth to neutral responses
         else:
             return f"Absolutely! 😊 " + original_response + " What's your next move? 🎯"
     
@@ -169,32 +171,29 @@ class ConversationContext:
     """Track conversation context to avoid repetitive suggestions"""
     
     def __init__(self):
-        self.rejected_services = set()
-        self.suggested_actions = set()
-        self.conversation_count = 0
-        self.last_intent = None
+        self.rejected_services: set = set()
+        self.suggested_actions: set = set()
+        self.conversation_count: int = 0
+        self.last_intent: Optional[str] = None
     
-    def add_rejection(self, service: str):
-        """Mark a service as rejected by the user"""
+    def add_rejection(self, service: str) -> None:
         self.rejected_services.add(service.lower())
     
-    def add_suggested_action(self, action: str):
-        """Track what we've already suggested"""
+    def add_suggested_action(self, action: str) -> None:
         self.suggested_actions.add(action.lower())
     
     def is_rejected(self, service: str) -> bool:
-        """Check if user has rejected this service"""
         return service.lower() in self.rejected_services
     
     def already_suggested(self, action: str) -> bool:
-        """Check if we've already suggested this action"""
         return action.lower() in self.suggested_actions
 
-# Store context per user (in production, use Redis or database)
 user_contexts: Dict[str, ConversationContext] = {}
 
 def get_user_context(user_id: str) -> ConversationContext:
     """Get or create conversation context for user"""
+    if not user_id or not isinstance(user_id, str):
+        raise ValueError("Invalid user_id")
     if user_id not in user_contexts:
         user_contexts[user_id] = ConversationContext()
     return user_contexts[user_id]
@@ -203,17 +202,14 @@ def is_productivity_related(message: str) -> bool:
     """Check if message is related to productivity/work"""
     message_lower = message.lower()
     
-    # Check for inappropriate content first
     for keyword in INAPPROPRIATE_KEYWORDS:
         if keyword in message_lower:
             return False
     
-    # Check for productivity keywords
     for keyword in PRODUCTIVITY_KEYWORDS:
         if keyword in message_lower:
             return True
     
-    # Check for common productivity phrases
     productivity_phrases = [
         "what should i do", "help me with", "how to", "need to",
         "have to", "should i", "can you help", "assist me", "updates", "events"
@@ -225,12 +221,10 @@ def detect_rejection(message: str) -> bool:
     """Detect if user is rejecting suggestions"""
     message_lower = message.lower()
     
-    # Check explicit rejection patterns
     for pattern in REJECTION_PATTERNS:
-        if re.search(pattern, message_lower):
+        if re.search(pattern, message_lower, re.IGNORECASE):
             return True
     
-    # Check for negative sentiment words
     negative_words = ["no", "nope", "nah", "never", "stop", "enough", "annoying"]
     return any(word in message_lower for word in negative_words)
 
@@ -244,13 +238,10 @@ def extract_rejected_service(message: str) -> Optional[str]:
             return service
     return None
 
-# === EXISTING FUNCTIONS PRESERVED ===
-
-# Define positive and negative keywords for sentiment detection
 POSITIVE_KEYWORDS = ["good", "great", "fantastic", "amazing", "success", "achieve", "milestone", "celebrate", "happy", "awesome", "excellent", "wonderful"]
 NEGATIVE_KEYWORDS = ["bad", "terrible", "fail", "overwhelm", "stress", "problem", "issue", "difficult", "sad", "frustrate", "struggle", "delay"]
 
-async def fetch_calendar_events(start_date=None, end_date=None, user_id=None, timeout=10):
+async def fetch_calendar_events(start_date: Optional[str] = None, end_date: Optional[str] = None, user_id: Optional[str] = None, timeout: int = 10) -> List[Dict]:
     try:
         url = "https://backend.data-ai.co/list_calendar_events"
         params = {}
@@ -266,10 +257,14 @@ async def fetch_calendar_events(start_date=None, end_date=None, user_id=None, ti
                 events = await response.json()
                 end_time = asyncio.get_event_loop().time()
                 logger.info(f"fetch_calendar_events took {end_time - start_time:.2f} seconds for user {user_id}")
+                if not isinstance(events, dict):
+                    logger.error(f"Unexpected response format for calendar events: {events}")
+                    return []
                 return events.get("events", [])
     except aiohttp.ClientResponseError as e:
-        if e.status == 401 and 'action' in e.message and 'Requires authentication' in e.message:
-            return {"requires_auth": True, "auth_url": e.message.get("auth_url", "https://backend.data-ai.co/auth/google")}
+        if e.status == 401:
+            logger.warning(f"Authentication required for calendar events for user {user_id}")
+            return {"requires_auth": True, "auth_url": "https://backend.data-ai.co/auth/google"}
         logger.error(f"HTTP error fetching calendar events for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         raise Exception(f"Failed to fetch calendar events: HTTP error {str(e)}")
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
@@ -279,7 +274,7 @@ async def fetch_calendar_events(start_date=None, end_date=None, user_id=None, ti
         logger.error(f"Unexpected error fetching calendar events for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         raise Exception(f"Failed to fetch calendar events: {str(e)}")
 
-async def fetch_notion_pages(user_id=None, timeout=10):
+async def fetch_notion_pages(user_id: Optional[str] = None, timeout: int = 10) -> List[Dict]:
     cache_key = f"notion_pages_{user_id}"
     if cache_key in notion_pages_cache:
         logger.info(f"Returning cached Notion pages for user {user_id}")
@@ -291,7 +286,7 @@ async def fetch_notion_pages(user_id=None, timeout=10):
             async with session.get("https://backend.data-ai.co/list_notion_pages", timeout=timeout) as response:
                 response.raise_for_status()
                 pages = await response.json()
-                pages = pages.get("pages", [])
+                pages = pages.get("pages", []) if isinstance(pages, dict) else []
                 end_time = asyncio.get_event_loop().time()
                 logger.info(f"fetch_notion_pages took {end_time - start_time:.2f} seconds for user {user_id}")
                 notion_pages_cache[cache_key] = pages
@@ -300,14 +295,14 @@ async def fetch_notion_pages(user_id=None, timeout=10):
         logger.error(f"Error fetching Notion pages for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         return []
 
-async def fetch_notion_tasks(user_id=None, timeout=10):
+async def fetch_notion_tasks(user_id: Optional[str] = None, timeout: int = 10) -> List[Dict]:
     try:
         async with aiohttp.ClientSession() as session:
             start_time = asyncio.get_event_loop().time()
             async with session.get("https://backend.data-ai.co/list_notion_tasks", timeout=timeout) as response:
                 response.raise_for_status()
                 tasks = await response.json()
-                tasks = tasks.get("tasks", [])
+                tasks = tasks.get("tasks", []) if isinstance(tasks, dict) else []
                 end_time = asyncio.get_event_loop().time()
                 logger.info(f"fetch_notion_tasks took {end_time - start_time:.2f} seconds for user {user_id}")
                 return tasks
@@ -315,14 +310,14 @@ async def fetch_notion_tasks(user_id=None, timeout=10):
         logger.error(f"Error fetching Notion tasks for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         return []
 
-async def fetch_drive_deadlines(user_id=None, timeout=10):
+async def fetch_drive_deadlines(user_id: Optional[str] = None, timeout: int = 10) -> List[Dict]:
     try:
         async with aiohttp.ClientSession() as session:
             start_time = asyncio.get_event_loop().time()
             async with session.get("https://backend.data-ai.co/list_drive_deadlines", timeout=timeout) as response:
                 response.raise_for_status()
                 deadlines = await response.json()
-                deadlines = deadlines.get("deadlines", [])
+                deadlines = deadlines.get("deadlines", []) if isinstance(deadlines, dict) else []
                 end_time = asyncio.get_event_loop().time()
                 logger.info(f"fetch_drive_deadlines took {end_time - start_time:.2f} seconds for user {user_id}")
                 return deadlines
@@ -330,152 +325,195 @@ async def fetch_drive_deadlines(user_id=None, timeout=10):
         logger.error(f"Error fetching Google Drive deadlines for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         return []
 
-def generate_action_suggestions(message, mistral_response=""):
+def generate_action_suggestions(message: str, mistral_response: str = "") -> List[Dict]:
     message_lower = message.lower()
     mistral_lower = mistral_response.lower()
     suggestions = []
 
     if 'meeting' in message_lower or 'conference' in message_lower or 'meeting' in mistral_lower:
-        suggestions.append({
-            "action": "Write important notes in Notion",
-            "service": "notion",
-            "description": "Create a Notion page to jot down key points for the meeting."
-        })
-        suggestions.append({
-            "action": "Write up an email for the meeting to a colleague",
-            "service": "gmail",
-            "description": "Draft an email to a colleague about the meeting details."
-        })
-        suggestions.append({
-            "action": "Add a Reminder to Zoom",
-            "service": "zoom",
-            "description": "Create a Zoom meeting and add it to the calendar as a reminder."
-        })
+        suggestions.extend([
+            {
+                "action": "Write important notes in Notion",
+                "service": "notion",
+                "description": "Create a Notion page to jot down key points for the meeting.",
+                "priority": 5
+            },
+            {
+                "action": "Write up an email for the meeting to a colleague",
+                "service": "gmail",
+                "description": "Draft an email to a colleague about the meeting details.",
+                "priority": 4
+            },
+            {
+                "action": "Add a Reminder to Zoom",
+                "service": "zoom",
+                "description": "Create a Zoom meeting and add it to the calendar as a reminder.",
+                "priority": 3
+            }
+        ])
     elif 'deadline' in message_lower or 'project' in message_lower or 'deadline' in mistral_lower:
-        suggestions.append({
-            "action": "Break down tasks in Notion",
-            "service": "notion",
-            "description": "Create a Notion page to outline tasks for the project or deadline."
-        })
-        suggestions.append({
-            "action": "Set a calendar reminder",
-            "service": "calendar",
-            "description": "Add a reminder to Google Calendar for the deadline."
-        })
+        suggestions.extend([
+            {
+                "action": "Break down tasks in Notion",
+                "service": "notion",
+                "description": "Create a Notion page to outline tasks for the project or deadline.",
+                "priority": 5
+            },
+            {
+                "action": "Set a calendar reminder",
+                "service": "calendar",
+                "description": "Add a reminder to Google Calendar for the deadline.",
+                "priority": 4
+            }
+        ])
     elif 'appointment' in message_lower or 'doctor' in message_lower or 'appointment' in mistral_lower:
-        suggestions.append({
-            "action": "Send a reminder email",
-            "service": "gmail",
-            "description": "Draft an email reminder to bring documents for the appointment."
-        })
-        suggestions.append({
-            "action": "Add to calendar",
-            "service": "calendar",
-            "description": "Add the appointment to your Google Calendar."
-        })
+        suggestions.extend([
+            {
+                "action": "Send a reminder email",
+                "service": "gmail",
+                "description": "Draft an email reminder to bring documents for the appointment.",
+                "priority": 5
+            },
+            {
+                "action": "Add to calendar",
+                "service": "calendar",
+                "description": "Add the appointment to your Google Calendar.",
+                "priority": 4
+            }
+        ])
     elif 'celebrate' in message_lower or 'milestone' in message_lower or 'success' in mistral_lower:
-        suggestions.append({
-            "action": "Schedule a team celebration meeting",
-            "service": "calendar",
-            "description": "Schedule a meeting on Google Calendar to celebrate with your team."
-        })
-        suggestions.append({
-            "action": "Share achievement on Slack",
-            "service": "slack",
-            "description": "Post a message on Slack to share your milestone with the team."
-        })
+        suggestions.extend([
+            {
+                "action": "Schedule a team celebration meeting",
+                "service": "calendar",
+                "description": "Schedule a meeting on Google Calendar to celebrate with your team.",
+                "priority": 5
+            },
+            {
+                "action": "Share achievement on Slack",
+                "service": "slack",
+                "description": "Post a message on Slack to share your milestone with the team.",
+                "priority": 4
+            }
+        ])
     elif 'overwhelmed' in message_lower or 'stress' in message_lower or 'overwhelmed' in mistral_lower:
-        suggestions.append({
-            "action": "Organize thoughts in Notion",
-            "service": "notion",
-            "description": "Create a Notion page to organize your thoughts and reduce stress."
-        })
-        suggestions.append({
-            "action": "Request support via email",
-            "service": "gmail",
-            "description": "Draft an email to a colleague to request support or assistance."
-        })
+        suggestions.extend([
+            {
+                "action": "Organize thoughts in Notion",
+                "service": "notion",
+                "description": "Create a Notion page to organize your thoughts and reduce stress.",
+                "priority": 5
+            },
+            {
+                "action": "Request support via email",
+                "service": "gmail",
+                "description": "Draft an email to a colleague to request support or assistance.",
+                "priority": 4
+            }
+        ])
     else:
         suggestions.append({
             "action": "Plan your day",
             "service": "calendar",
-            "description": "Schedule your tasks for the day on Google Calendar to stay organized."
+            "description": "Schedule your tasks for the day on Google Calendar to stay organized.",
+            "priority": 3
         })
 
     return suggestions
 
-def generate_sentiment_based_suggestions(message, sentiment, mistral_response=""):
+def generate_sentiment_based_suggestions(message: str, sentiment: str, mistral_response: str = "") -> List[Dict]:
     message_lower = message.lower()
     mistral_lower = mistral_response.lower()
     suggestions = []
 
     if sentiment == "positive":
         if 'celebrate' in message_lower or 'milestone' in message_lower or 'success' in mistral_lower:
-            suggestions.append({
-                "action": "Schedule a team celebration meeting",
-                "service": "calendar",
-                "description": "Schedule a meeting on Google Calendar to celebrate with your team."
-            })
-            suggestions.append({
-                "action": "Share achievement on Slack",
-                "service": "slack",
-                "description": "Post a message on Slack to share your milestone with the team."
-            })
+            suggestions.extend([
+                {
+                    "action": "Schedule a team celebration meeting",
+                    "service": "calendar",
+                    "description": "Schedule a meeting on Google Calendar to celebrate with your team.",
+                    "priority": 5
+                },
+                {
+                    "action": "Share achievement on Slack",
+                    "service": "slack",
+                    "description": "Post a message on Slack to share your milestone with the team.",
+                    "priority": 4
+                }
+            ])
         elif 'project' in message_lower or 'progress' in mistral_lower:
-            suggestions.append({
-                "action": "Document progress in Notion",
-                "service": "notion",
-                "description": "Create a Notion page to document your project progress."
-            })
-            suggestions.append({
-                "action": "Schedule a follow-up meeting",
-                "service": "calendar",
-                "description": "Schedule a follow-up meeting on Google Calendar to keep the momentum going."
-            })
+            suggestions.extend([
+                {
+                    "action": "Document progress in Notion",
+                    "service": "notion",
+                    "description": "Create a Notion page to document your project progress.",
+                    "priority": 5
+                },
+                {
+                    "action": "Schedule a follow-up meeting",
+                    "service": "calendar",
+                    "description": "Schedule a follow-up meeting on Google Calendar to keep the momentum going.",
+                    "priority": 4
+                }
+            ])
         else:
             suggestions.append({
                 "action": "Celebrate with a team email",
                 "service": "gmail",
-                "description": "Send an email to your team to celebrate your positive mood."
+                "description": "Send an email to your team to celebrate your positive mood.",
+                "priority": 3
             })
     else:
         if 'project' in message_lower or 'deadline' in mistral_lower:
-            suggestions.append({
-                "action": "Break down tasks in Notion",
-                "service": "notion",
-                "description": "Create a Notion page to outline tasks for the project or deadline."
-            })
-            suggestions.append({
-                "action": "Set a calendar reminder",
-                "service": "calendar",
-                "description": "Add a reminder to Google Calendar for the deadline."
-            })
+            suggestions.extend([
+                {
+                    "action": "Break down tasks in Notion",
+                    "service": "notion",
+                    "description": "Create a Notion page to outline tasks for the project or deadline.",
+                    "priority": 5
+                },
+                {
+                    "action": "Set a calendar reminder",
+                    "service": "calendar",
+                    "description": "Add a reminder to Google Calendar for the deadline.",
+                    "priority": 4
+                }
+            ])
         elif 'overwhelmed' in message_lower or 'stress' in message_lower or 'overwhelmed' in mistral_lower:
-            suggestions.append({
-                "action": "Organize thoughts in Notion",
-                "service": "notion",
-                "description": "Create a Notion page to organize your thoughts and reduce stress."
-            })
-            suggestions.append({
-                "action": "Request support via email",
-                "service": "gmail",
-                "description": "Draft an email to a colleague to request support or assistance."
-            })
+            suggestions.extend([
+                {
+                    "action": "Organize thoughts in Notion",
+                    "service": "notion",
+                    "description": "Create a Notion page to organize your thoughts and reduce stress.",
+                    "priority": 5
+                },
+                {
+                    "action": "Request support via email",
+                    "service": "gmail",
+                    "description": "Draft an email to a colleague to request support or assistance.",
+                    "priority": 4
+                }
+            ])
         else:
-            suggestions.append({
-                "action": "Schedule a break",
-                "service": "calendar",
-                "description": "Add a break to your Google Calendar to take some time off."
-            })
-            suggestions.append({
-                "action": "Discuss concerns on Slack",
-                "service": "slack",
-                "description": "Share your challenges with your team on Slack to get support."
-            })
+            suggestions.extend([
+                {
+                    "action": "Schedule a break",
+                    "service": "calendar",
+                    "description": "Add a break to your Google Calendar to take some time off.",
+                    "priority": 3
+                },
+                {
+                    "action": "Discuss concerns on Slack",
+                    "service": "slack",
+                    "description": "Share your challenges with your team on Slack to get support.",
+                    "priority": 3
+                }
+            ])
 
     return suggestions
 
-def detect_sentiment(message, mistral_response=""):
+def detect_sentiment(message: str, mistral_response: str = "") -> str:
     message_lower = message.lower()
     mistral_lower = mistral_response.lower()
 
@@ -487,14 +525,9 @@ def detect_sentiment(message, mistral_response=""):
     positive_score = sum(1 for keyword in POSITIVE_KEYWORDS if keyword in message_lower or keyword in mistral_lower)
     negative_score = sum(1 for keyword in NEGATIVE_KEYWORDS if keyword in message_lower or keyword in mistral_lower)
 
-    if positive_score > negative_score:
-        return "positive"
-    elif negative_score > positive_score:
-        return "negative"
-    else:
-        return "positive"
+    return "positive" if positive_score >= negative_score else "negative"
 
-def extract_crisp_response(mistral_response, sentiment):
+def extract_crisp_response(mistral_response: str, sentiment: str) -> str:
     """Extract the first sentence from Mistral's response as a crisp line."""
     try:
         sentences = mistral_response.split('.')
@@ -504,12 +537,9 @@ def extract_crisp_response(mistral_response, sentiment):
         return crisp_response
     except Exception as e:
         logger.error(f"Error extracting crisp response: {str(e)}\n{traceback.format_exc()}")
-        if sentiment == "positive":
-            return "Congratulations on your achievement!"
-        else:
-            return "Sorry to hear you're facing challenges!"
+        return "Congratulations on your achievement!" if sentiment == "positive" else "Sorry to hear you're facing challenges!"
 
-def generate_contextual_response(message_lower, suggestions, sentiment):
+def generate_contextual_response(message_lower: str, suggestions: List[Dict], sentiment: str) -> str:
     """Generate a contextual follow-up based on the sentiment, suggestions, and message context."""
     if not suggestions:
         return "Consider planning your next steps to stay on track."
@@ -521,20 +551,11 @@ def generate_contextual_response(message_lower, suggestions, sentiment):
     is_celebratory = any(keyword in message_lower for keyword in ["celebrate", "milestone", "success", "achieve"])
 
     action_lower = action.lower()
-    if service.lower() in action_lower:
-        action_phrase = action_lower.replace(service.lower(), "").strip()
-    else:
-        action_phrase = action_lower
+    action_phrase = action_lower.replace(service.lower(), "").strip() if service.lower() in action_lower else action_lower
 
     if sentiment == "positive":
-        if is_celebratory:
-            return f"To celebrate, try to {action_phrase} using {service.capitalize()}."
-        else:
-            return f"To stay on track, try to {action_phrase} using {service.capitalize()}."
-    else:
-        return f"To manage this, try to {action_phrase} using {service.capitalize()}."
-
-# === ENHANCED FUNCTIONS WITH DATA-AI PERSONALITY ===
+        return f"To celebrate, try to {action_phrase} using {service.capitalize()}." if is_celebratory else f"To stay on track, try to {action_phrase} using {service.capitalize()}."
+    return f"To manage this, try to {action_phrase} using {service.capitalize()}."
 
 def generate_contextual_response_enhanced(
     message: str, 
@@ -544,30 +565,22 @@ def generate_contextual_response_enhanced(
     """Enhanced version with DATA-AI personality while preserving original structure"""
     
     try:
-        # Validate inputs (keep your existing validation)
         if not message or not isinstance(message, str):
             message = "help"
         if not user_id or not isinstance(user_id, str):
-            raise Exception("Invalid user_id")
+            raise ValueError("Invalid user_id")
         if services is None:
             services = {}
         
         context = get_user_context(user_id)
-        if context is None:
-            context = ConversationContext()
-            
         context.conversation_count += 1
         message_lower = message.lower()
         
-        # 1. Handle greetings with DATA-AI personality
         if any(word in message_lower for word in ["hi", "hello", "hey", "sup"]):
             original_response = "Hi! I can help you with your calendar, emails, and productivity tasks. What would you like to do?"
             enhanced_response = dataai_enhancer.enhance_greeting(user_id, original_response)
             
-            # Only suggest services if user asks specifically
-            suggestions = []
-            if dataai_enhancer.detect_service_intent_smart(message):
-                suggestions = generate_safe_suggestions(services)
+            suggestions = generate_safe_suggestions(services) if dataai_enhancer.detect_service_intent_smart(message) else []
             
             return {
                 "response": enhanced_response,
@@ -577,17 +590,15 @@ def generate_contextual_response_enhanced(
                 "confidence": 0.9
             }
         
-        # 2. Handle connection status questions
         elif any(phrase in message_lower for phrase in ["connected", "connection", "linked", "authenticated"]):
-            # Use your existing logic
             original_result = handle_connection_status_request(message, services, context)
             original_result["response"] = dataai_enhancer.enhance_connection_status(original_result["response"])
             return original_result
         
-        # 3. Handle explicit service requests (when user wants them)
         elif dataai_enhancer.detect_service_intent_smart(message):
-            # Calendar requests
-            if any(phrase in message_lower for phrase in ["calendar", "events", "schedule"]):
+            if any(phrase in message_lower for phrase in [
+                "calendar", "events", "schedule", "upcoming", "my events", "calendar events", "show events"
+            ]):
                 if services.get("google_calendar"):
                     original_response = "I can show you your calendar events!"
                     enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "calendar")
@@ -619,8 +630,9 @@ def generate_contextual_response_enhanced(
                         "confidence": 0.9
                     }
             
-            # Email requests
-            elif any(phrase in message_lower for phrase in ["email", "gmail", "inbox"]):
+            elif any(phrase in message_lower for phrase in [
+                "email", "gmail", "inbox", "messages", "check email", "see emails", "recent emails"
+            ]):
                 if services.get("gmail"):
                     original_response = "I can help you with your emails!"
                     enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "email")
@@ -651,23 +663,55 @@ def generate_contextual_response_enhanced(
                         "intent": "email_not_connected",
                         "confidence": 0.9
                     }
+            
+            elif any(phrase in message_lower for phrase in [
+                "notion", "notes", "document", "page", "notion pages", "my notes", "show pages"
+            ]):
+                if services.get("notion"):
+                    original_response = "I can show you your Notion pages!"
+                    enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "notion")
+                    return {
+                        "response": enhanced_response,
+                        "suggestions": [{
+                            "action": "List Notion pages",
+                            "service": "notion",
+                            "description": "View your workspace 📝",
+                            "priority": 5
+                        }],
+                        "follow_up_questions": ["Which page would you like to work on? 📄"],
+                        "intent": "notion_request",
+                        "confidence": 0.9
+                    }
+                else:
+                    original_response = "To access your Notion workspace, please connect Notion first."
+                    enhanced_response = dataai_enhancer.enhance_service_response(message, original_response, "notion")
+                    return {
+                        "response": enhanced_response,
+                        "suggestions": [{
+                            "action": "Connect Notion",
+                            "service": "notion",
+                            "description": "Enable Notion integration 🔗",
+                            "priority": 5
+                        }],
+                        "follow_up_questions": [],
+                        "intent": "notion_not_connected",
+                        "confidence": 0.9
+                    }
         
-        # 4. Handle casual conversation (NO service suggestions)
         else:
             original_response = "I can help you with your calendar, emails, or other productivity tasks. What would you like to do?"
             enhanced_response = dataai_enhancer.enhance_general_response(message, original_response)
             
             return {
                 "response": enhanced_response,
-                "suggestions": [],  # NO automatic suggestions for casual chat
+                "suggestions": [],
                 "follow_up_questions": ["What would you like me to help you with? 💡"],
                 "intent": "general_help",
                 "confidence": 0.7
             }
             
     except Exception as e:
-        logger.error(f"Error in generate_contextual_response_enhanced: {str(e)}")
-        # Safe fallback with DATA-AI personality
+        logger.error(f"Error in generate_contextual_response_enhanced: {str(e)}\n{traceback.format_exc()}")
         return {
             "response": f"Oops! 😅 {dataai_enhancer.name} had a tiny hiccup there. I'm still here and ready to help though! What can I do for you? 💪",
             "suggestions": [],
@@ -692,7 +736,7 @@ def generate_safe_suggestions(services: Dict[str, bool]) -> List[Dict]:
         suggestions.append({
             "action": "List Gmail messages",
             "service": "gmail",
-            "description": "Check your recent emails", 
+            "description": "Check your recent emails",
             "priority": 4
         })
     
@@ -704,11 +748,14 @@ def generate_safe_suggestions(services: Dict[str, bool]) -> List[Dict]:
             "priority": 3
         })
     
-    return suggestions[:2]  # Limit to 2 suggestions
+    return suggestions[:2]
 
-def handle_connection_status_request(message: str, services: Dict[str, bool], context) -> Dict:
+def handle_connection_status_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Simplified connection status handler"""
     try:
+        if context is None:
+            context = ConversationContext()
+        
         message_lower = message.lower()
         
         if "calendar" in message_lower:
@@ -739,7 +786,6 @@ def handle_connection_status_request(message: str, services: Dict[str, bool], co
                     "confidence": 0.9
                 }
         
-        # Default connection status
         connected_count = sum(1 for connected in services.values() if connected)
         if connected_count > 0:
             return {
@@ -764,7 +810,7 @@ def handle_connection_status_request(message: str, services: Dict[str, bool], co
             }
             
     except Exception as e:
-        logger.error(f"Error in handle_connection_status_request: {str(e)}")
+        logger.error(f"Error in handle_connection_status_request: {str(e)}\n{traceback.format_exc()}")
         return {
             "response": "I can help you check your service connections.",
             "suggestions": [],
@@ -773,8 +819,11 @@ def handle_connection_status_request(message: str, services: Dict[str, bool], co
             "confidence": 0.5
         }
 
-def handle_user_frustration(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+def handle_user_frustration(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Handle when user expresses frustration with responses"""
+    if context is None:
+        context = ConversationContext()
+    
     return {
         "response": "I apologize for the confusion! Let me be more helpful. What specific question can I answer for you?",
         "suggestions": [
@@ -787,8 +836,11 @@ def handle_user_frustration(message: str, services: Dict[str, bool], context: Co
         "confidence": 0.9
     }
 
-def generate_service_suggestions(service_key: str, context: ConversationContext) -> List[Dict]:
+def generate_service_suggestions(service_key: str, context: Optional[ConversationContext] = None) -> List[Dict]:
     """Generate suggestions for a specific connected service"""
+    if context is None:
+        context = ConversationContext()
+    
     if service_key == "google_calendar":
         return [{
             "action": "Check calendar",
@@ -799,7 +851,7 @@ def generate_service_suggestions(service_key: str, context: ConversationContext)
     elif service_key == "gmail":
         return [{
             "action": "List Gmail messages",
-            "service": "gmail", 
+            "service": "gmail",
             "description": "Check your recent emails",
             "priority": 5
         }]
@@ -814,22 +866,22 @@ def generate_service_suggestions(service_key: str, context: ConversationContext)
         return [{
             "action": "List Slack channels",
             "service": "slack",
-            "description": "View your channels", 
+            "description": "View your channels",
             "priority": 5
         }]
-    else:
-        return []
+    return []
 
 def generate_fresh_suggestions(
     services: Dict[str, bool], 
-    context: ConversationContext,
+    context: Optional[ConversationContext] = None,
     max_suggestions: int = 2
 ) -> List[Dict]:
-    """Generate suggestions that haven't been rejected or repeated - UPDATED"""
+    """Generate suggestions that haven't been rejected or repeated"""
+    if context is None:
+        context = ConversationContext()
     
     suggestions = []
     
-    # Calendar suggestions
     if services.get("google_calendar") and not context.is_rejected("calendar"):
         if not context.already_suggested("check calendar"):
             suggestions.append({
@@ -840,57 +892,56 @@ def generate_fresh_suggestions(
             })
             context.add_suggested_action("check calendar")
     
-    # Gmail suggestions  
     if services.get("gmail") and not context.is_rejected("email"):
         if not context.already_suggested("list gmail messages"):
             suggestions.append({
-                "action": "List Gmail messages", 
+                "action": "List Gmail messages",
                 "service": "gmail",
                 "description": "Check your recent emails",
                 "priority": 4
             })
             context.add_suggested_action("list gmail messages")
     
-    # Notion suggestions
     if services.get("notion") and not context.is_rejected("notion"):
         if not context.already_suggested("list notion pages"):
             suggestions.append({
                 "action": "List Notion pages",
-                "service": "notion", 
+                "service": "notion",
                 "description": "View your Notion workspace",
                 "priority": 3
             })
             context.add_suggested_action("list notion pages")
     
-    # Slack suggestions
     if services.get("slack") and not context.is_rejected("slack"):
         if not context.already_suggested("list slack channels"):
             suggestions.append({
                 "action": "List Slack channels",
                 "service": "slack",
-                "description": "View your team channels", 
+                "description": "View your team channels",
                 "priority": 3
             })
             context.add_suggested_action("list slack channels")
     
-    # Limit suggestions and prioritize
     return sorted(suggestions, key=lambda x: x["priority"], reverse=True)[:max_suggestions]
 
 def generate_minimal_suggestions(
     services: Dict[str, bool], 
-    context: ConversationContext
+    context: Optional[ConversationContext] = None
 ) -> List[Dict]:
     """Generate only 1-2 most relevant suggestions"""
     return generate_fresh_suggestions(services, context, max_suggestions=1)
 
-def handle_scheduling_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+def handle_scheduling_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Handle meeting/scheduling requests specifically"""
+    if context is None:
+        context = ConversationContext()
+    
     if services.get("google_calendar"):
         return {
             "response": "I can help you schedule that meeting! Let me show you your calendar first.",
             "suggestions": [{
                 "action": "Check calendar",
-                "service": "google_calendar", 
+                "service": "google_calendar",
                 "description": "View available time slots",
                 "priority": 5
             }],
@@ -898,26 +949,27 @@ def handle_scheduling_request(message: str, services: Dict[str, bool], context: 
             "intent": "schedule_meeting",
             "confidence": 0.9
         }
-    else:
-        return {
-            "response": "To help with scheduling, I'll need access to your Google Calendar.",
-            "suggestions": [{
-                "action": "Connect Google Calendar",
-                "service": "google_calendar",
-                "description": "Enable calendar integration", 
-                "priority": 5
-            }],
-            "follow_up_questions": [],
-            "intent": "schedule_meeting",
-            "confidence": 0.9
-        }
+    return {
+        "response": "To help with scheduling, I'll need access to your Google Calendar.",
+        "suggestions": [{
+            "action": "Connect Google Calendar",
+            "service": "google_calendar",
+            "description": "Enable calendar integration",
+            "priority": 5
+        }],
+        "follow_up_questions": [],
+        "intent": "schedule_meeting",
+        "confidence": 0.9
+    }
 
-def handle_email_management_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+def handle_email_management_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Handle email management requests with new Gmail APIs"""
+    if context is None:
+        context = ConversationContext()
+    
     message_lower = message.lower()
     
     if services.get("gmail"):
-        # Determine specific email action
         if any(phrase in message_lower for phrase in ["list", "show", "inbox", "messages"]):
             return {
                 "response": "I'll show you your recent Gmail messages!",
@@ -956,7 +1008,7 @@ def handle_email_management_request(message: str, services: Dict[str, bool], con
                     },
                     {
                         "action": "Compose email",
-                        "service": "gmail", 
+                        "service": "gmail",
                         "description": "Create a new email",
                         "priority": 4
                     }
@@ -965,22 +1017,24 @@ def handle_email_management_request(message: str, services: Dict[str, bool], con
                 "intent": "email_management",
                 "confidence": 0.9
             }
-    else:
-        return {
-            "response": "To help with emails, please connect your Gmail account first.",
-            "suggestions": [{
-                "action": "Connect Gmail",
-                "service": "gmail",
-                "description": "Enable Gmail integration",
-                "priority": 5
-            }],
-            "follow_up_questions": [],
-            "intent": "email_management",
-            "confidence": 0.9
-        }
+    return {
+        "response": "To help with emails, please connect your Gmail account first.",
+        "suggestions": [{
+            "action": "Connect Gmail",
+            "service": "gmail",
+            "description": "Enable Gmail integration",
+            "priority": 5
+        }],
+        "follow_up_questions": [],
+        "intent": "email_management",
+        "confidence": 0.9
+    }
 
-def handle_slack_management_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+def handle_slack_management_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Handle Slack management requests with new Slack APIs"""
+    if context is None:
+        context = ConversationContext()
+    
     message_lower = message.lower()
     
     if services.get("slack"):
@@ -1028,54 +1082,35 @@ def handle_slack_management_request(message: str, services: Dict[str, bool], con
                     }
                 ],
                 "follow_up_questions": ["Would you like to see your channels or post a message?"],
-                "intent": "slack_management", 
+                "intent": "slack_management",
                 "confidence": 0.9
             }
-    else:
-        return {
-            "response": "To help with Slack, please connect your Slack workspace first.",
-            "suggestions": [{
-                "action": "Connect Slack",
-                "service": "slack",
-                "description": "Enable Slack integration",
-                "priority": 5
-            }],
-            "follow_up_questions": [],
-            "intent": "slack_management",
-            "confidence": 0.9
-        }
+    return {
+        "response": "To help with Slack, please connect your Slack workspace first.",
+        "suggestions": [{
+            "action": "Connect Slack",
+            "service": "slack",
+            "description": "Enable Slack integration",
+            "priority": 5
+        }],
+        "follow_up_questions": [],
+        "intent": "slack_management",
+        "confidence": 0.9
+    }
 
-def handle_email_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
-    """Handle email-related requests (LEGACY - kept for compatibility)"""
-    if services.get("gmail"):
-        return {
-            "response": "I can help you with that email!",
-            "suggestions": [{
-                "action": "Compose email",
-                "service": "gmail",
-                "description": "Draft your message",
-                "priority": 5
-            }],
-            "follow_up_questions": ["Who are you sending this email to?"],
-            "intent": "send_email", 
-            "confidence": 0.9
-        }
-    else:
-        return {
-            "response": "To help with emails, please connect your Gmail account first.",
-            "suggestions": [{
-                "action": "Connect Gmail",
-                "service": "gmail",
-                "description": "Enable email integration",
-                "priority": 5
-            }],
-            "follow_up_questions": [],
-            "intent": "send_email",
-            "confidence": 0.9
-        }
+def handle_email_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
+    """DEPRECATED: Use handle_email_management_request instead"""
+    if context is None:
+        context = ConversationContext()
+    
+    logger.warning("handle_email_request is deprecated; use handle_email_management_request")
+    return handle_email_management_request(message, services, context)
 
-def handle_document_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+def handle_document_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Handle document/note creation requests"""
+    if context is None:
+        context = ConversationContext()
+    
     if services.get("notion"):
         return {
             "response": "I can help you create that document in Notion!",
@@ -1089,28 +1124,30 @@ def handle_document_request(message: str, services: Dict[str, bool], context: Co
             "intent": "create_document",
             "confidence": 0.9
         }
-    else:
-        return {
-            "response": "To create documents, please connect your Notion workspace first.",
-            "suggestions": [{
-                "action": "Connect Notion", 
-                "service": "notion",
-                "description": "Enable document creation",
-                "priority": 5
-            }],
-            "follow_up_questions": [],
-            "intent": "create_document",
-            "confidence": 0.9
-        }
+    return {
+        "response": "To create documents, please connect your Notion workspace first.",
+        "suggestions": [{
+            "action": "Connect Notion",
+            "service": "notion",
+            "description": "Enable document creation",
+            "priority": 5
+        }],
+        "follow_up_questions": [],
+        "intent": "create_document",
+        "confidence": 0.9
+    }
 
-def handle_notion_pages_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+def handle_notion_pages_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Handle Notion pages listing requests specifically"""
+    if context is None:
+        context = ConversationContext()
+    
     if services.get("notion"):
         return {
             "response": "I'll show you your Notion pages right away!",
             "suggestions": [{
                 "action": "List Notion pages",
-                "service": "notion", 
+                "service": "notion",
                 "description": "View all your Notion pages",
                 "priority": 5
             }],
@@ -1118,28 +1155,30 @@ def handle_notion_pages_request(message: str, services: Dict[str, bool], context
             "intent": "list_notion_pages",
             "confidence": 0.9
         }
-    else:
-        return {
-            "response": "To view your Notion pages, I'll need access to your Notion workspace first.",
-            "suggestions": [{
-                "action": "Connect Notion",
-                "service": "notion",
-                "description": "Enable Notion integration to view your pages", 
-                "priority": 5
-            }],
-            "follow_up_questions": [],
-            "intent": "list_notion_pages",
-            "confidence": 0.9
-        }
+    return {
+        "response": "To view your Notion pages, I'll need access to your Notion workspace first.",
+        "suggestions": [{
+            "action": "Connect Notion",
+            "service": "notion",
+            "description": "Enable Notion integration to view your pages",
+            "priority": 5
+        }],
+        "follow_up_questions": [],
+        "intent": "list_notion_pages",
+        "confidence": 0.9
+    }
 
-def handle_calendar_events_request(message: str, services: Dict[str, bool], context: ConversationContext) -> Dict:
+def handle_calendar_events_request(message: str, services: Dict[str, bool], context: Optional[ConversationContext] = None) -> Dict:
     """Handle calendar events listing requests specifically"""
+    if context is None:
+        context = ConversationContext()
+    
     if services.get("google_calendar"):
         return {
             "response": "Let me fetch your calendar events for you!",
             "suggestions": [{
                 "action": "Check calendar",
-                "service": "google_calendar", 
+                "service": "google_calendar",
                 "description": "View your upcoming events",
                 "priority": 5
             }],
@@ -1147,25 +1186,21 @@ def handle_calendar_events_request(message: str, services: Dict[str, bool], cont
             "intent": "list_calendar_events",
             "confidence": 0.9
         }
-    else:
-        return {
-            "response": "To view your calendar events, I'll need access to your Google Calendar first.",
-            "suggestions": [{
-                "action": "Connect Google Calendar",
-                "service": "google_calendar",
-                "description": "Enable Google Calendar integration", 
-                "priority": 5
-            }],
-            "follow_up_questions": [],
-            "intent": "list_calendar_events",
-            "confidence": 0.9
-        }
+    return {
+        "response": "To view your calendar events, I'll need access to your Google Calendar first.",
+        "suggestions": [{
+            "action": "Connect Google Calendar",
+            "service": "google_calendar",
+            "description": "Enable Google Calendar integration",
+            "priority": 5
+        }],
+        "follow_up_questions": [],
+        "intent": "list_calendar_events",
+        "confidence": 0.9
+    }
 
-# === PRESERVED EXISTING CHAT FUNCTIONS ===
-
-async def chat_with_mistral(message, user_id):
-    # Your existing chat_with_mistral function with DATA-AI enhancement
-    response = None
+async def chat_with_mistral(message: str, user_id: str) -> Dict[str, Any]:
+    """Chat with Mistral API with DATA-AI enhancement"""
     mistral_response = "I couldn't process the request due to an error."
     suggestions = []
     notion_pages = []
@@ -1173,7 +1208,10 @@ async def chat_with_mistral(message, user_id):
 
     try:
         messages = [
-            {"role": "system", "content": "You are DATA-AI, a helpful and cheerful productivity assistant. Analyze the user's message, determine their sentiment (positive or negative), and provide a conversational response with actionable suggestions to improve their productivity. Add appropriate emojis and maintain an enthusiastic tone. Suggestions should involve services like Google Calendar, Notion, Gmail, or Slack."},
+            {
+                "role": "system",
+                "content": "You are DATA-AI, a helpful and cheerful productivity assistant. Analyze the user's message, determine their sentiment (positive or negative), and provide a conversational response with actionable suggestions to improve their productivity. Add appropriate emojis and maintain an enthusiastic tone. Suggestions should involve services like Google Calendar, Notion, Gmail, or Slack."
+            },
             {"role": "user", "content": message}
         ]
 
@@ -1213,7 +1251,7 @@ async def chat_with_mistral(message, user_id):
                     logger.error(f"Mistral API response is None for user {user_id}")
                     mistral_response = "Mistral API returned no response."
                 else:
-                    mistral_response = response["choices"][0]["message"]["content"]
+                    mistral_response = response.get("choices", [{}])[0].get("message", {}).get("content", "I couldn't process the response from the assistant.")
                     if not isinstance(mistral_response, str):
                         logger.error(f"Mistral response content is not a string for user {user_id}: {mistral_response}")
                         mistral_response = "I couldn't process the response from the assistant."
@@ -1242,10 +1280,9 @@ async def chat_with_mistral(message, user_id):
         if not isinstance(notion_pages, list):
             logger.warning(f"notion_pages is not a list for user {user_id}: {notion_pages}")
             notion_pages = []
-        notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
+        notion_page_options = [{"id": page.get("id", ""), "title": page.get("title", "")} for page in notion_pages if isinstance(page, dict)]
 
         crisp_response = extract_crisp_response(mistral_response, sentiment)
-        # ENHANCED: Add DATA-AI personality to Mistral response
         enhanced_mistral = enhance_mistral_response_with_dataai(mistral_response, message)
         contextual_response = generate_contextual_response(message_lower, suggestions, sentiment)
         final_response = f"{enhanced_mistral} {contextual_response}"
@@ -1260,7 +1297,6 @@ async def chat_with_mistral(message, user_id):
         }
     except Exception as e:
         logger.error(f"Error in chat_with_mistral for user {user_id}: {str(e)}\n{traceback.format_exc()}")
-        # Fallback logic with DATA-AI personality
         suggestions = generate_action_suggestions(message)
         try:
             notion_pages = await fetch_notion_pages(user_id=user_id) if any(s["service"] == "notion" for s in suggestions) else []
@@ -1271,7 +1307,7 @@ async def chat_with_mistral(message, user_id):
         if not isinstance(notion_pages, list):
             logger.warning(f"notion_pages is not a list in fallback for user {user_id}: {notion_pages}")
             notion_pages = []
-        notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
+        notion_page_options = [{"id": page.get("id", ""), "title": page.get("title", "")} for page in notion_pages if isinstance(page, dict)]
 
         sentiment = detect_sentiment(message)
         confidence = 0.9
@@ -1294,8 +1330,8 @@ async def chat_with_mistral(message, user_id):
             "notion_pages": notion_page_options
         }
 
-async def process_user_message(message, user_id):
-    """Process user message and return structured response (PRESERVED FUNCTION)"""
+async def process_user_message(message: str, user_id: str) -> Dict[str, Any]:
+    """Process user message and return structured response"""
     try:
         message_lower = message.lower()
         updates = []
@@ -1330,18 +1366,19 @@ async def process_user_message(message, user_id):
                     "requires_auth": True,
                     "auth_url": events_result["auth_url"]
                 }
+            
             events = events_result
             suggestions = []
             if events:
                 response = f"Here's a summary of your updates for {date_range}:\n\n"
                 for idx, event in enumerate(events, 1):
-                    event_summary = event["summary"].strip()
-                    start_time = event["start"]
+                    event_summary = event.get("summary", "Untitled Event").strip()
+                    start_time = event.get("start", "Unknown Time")
                     updates.append(f"{idx}. Meeting: {event_summary} at {start_time}. You can join the meeting via this Zoom link.")
                     event_suggestions = generate_action_suggestions(event_summary)
                     for suggestion in event_suggestions:
                         suggestion["event_summary"] = event_summary
-                        suggestion["calendar_link"] = event["link"]
+                        suggestion["calendar_link"] = event.get("link", "")
                     suggestions.extend(event_suggestions)
             else:
                 updates.append(f"No calendar events found for {date_range}.")
@@ -1353,7 +1390,9 @@ async def process_user_message(message, user_id):
 
             if notion_tasks:
                 for idx, task in enumerate(notion_tasks, len(updates) + 1):
-                    updates.append(f"{idx}. In Notion, there's a task assigned to you for {task['title']}. You can find the details in the \"{task['section']}\" section.")
+                    title = task.get("title", "Untitled Task")
+                    section = task.get("section", "Unknown Section")
+                    updates.append(f"{idx}. In Notion, there's a task assigned to you for {title}. You can find the details in the \"{section}\" section.")
 
             start_time = asyncio.get_event_loop().time()
             drive_deadlines = await fetch_drive_deadlines(user_id=user_id)
@@ -1362,7 +1401,9 @@ async def process_user_message(message, user_id):
 
             if drive_deadlines:
                 for idx, deadline in enumerate(drive_deadlines, len(updates) + 1):
-                    updates.append(f"{idx}. Don't forget about the deadline for {deadline['title']}. You can work on it in the Google Drive folder labeled '{deadline['folder']}'.")
+                    title = deadline.get("title", "Untitled Deadline")
+                    folder = deadline.get("folder", "Unknown Folder")
+                    updates.append(f"{idx}. Don't forget about the deadline for {title}. You can work on it in the Google Drive folder labeled '{folder}'.")
 
             if updates:
                 response = "\n\n".join(updates)
@@ -1374,7 +1415,7 @@ async def process_user_message(message, user_id):
             if not isinstance(notion_pages, list):
                 logger.warning(f"notion_pages is not a list in process_user_message for user {user_id}: {notion_pages}")
                 notion_pages = []
-            notion_page_options = [{"id": page["id"], "title": page["title"]} for page in notion_pages]
+            notion_page_options = [{"id": page.get("id", ""), "title": page.get("title", "")} for page in notion_pages if isinstance(page, dict)]
 
             return {
                 "response": response.strip(),
@@ -1382,8 +1423,7 @@ async def process_user_message(message, user_id):
                 "notion_pages": notion_page_options if suggestions else []
             }
 
-        else:
-            return await chat_with_mistral(message, user_id)
+        return await chat_with_mistral(message, user_id)
     except Exception as e:
         logger.error(f"Error processing user message for user {user_id}: {str(e)}\n{traceback.format_exc()}")
         raise
