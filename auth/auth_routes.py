@@ -12,7 +12,7 @@ from models.user import User
 from passlib.context import CryptContext
 from utils.jwt_utils import generate_state_token, decode_state_token, create_access_token, create_refresh_token, decode_access_token
 from utils.token_store import save_tokens, load_tokens, remove_tokens
-from jwt import InvalidTokenError  # Updated import
+from jwt import InvalidTokenError
 import logging
 from cachetools import TTLCache
 
@@ -50,12 +50,10 @@ def ping():
 
 @router.post("/auth/register")
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
-    # Check if email already exists
     existing_user_by_email = db.query(User).filter(User.email == request.email).first()
     if existing_user_by_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
 
-    # Check if username already exists
     existing_user_by_username = db.query(User).filter(User.username == request.username).first()
     if existing_user_by_username:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
@@ -116,13 +114,9 @@ def delete_user(current_user: User = Depends(get_current_user), db: Session = De
     user_id = current_user.id
 
     try:
-        # Delete associated tokens
         remove_tokens(str(user_id))
-
-        # Delete the user
         db.delete(current_user)
         db.commit()
-
         logger.info(f"User {user_id} deleted successfully")
         return {"message": "User deleted successfully"}
     except Exception as e:
@@ -134,29 +128,21 @@ def delete_user(current_user: User = Depends(get_current_user), db: Session = De
 def change_password(request: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     user_id = current_user.id
 
-    # Verify current password
     if not pwd_context.verify(request.current_password, current_user.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect current password")
 
-    # Hash the new password
     hashed_password = pwd_context.hash(request.new_password)
-
-    # Update the password
     current_user.password_hash = hashed_password
     db.commit()
-
     logger.info(f"Password changed successfully for user {user_id}")
     return {"message": "Password changed successfully"}
 
-# ---- Generic OAuth Helper ----
 def generate_oauth_redirect_url(base_url, params):
     encoded_params = urlencode(params, doseq=False)
     url = f"{base_url}?{encoded_params}"
     logger.debug(f"Generated OAuth redirect URL: {url}")
     return url
 
-# ---- Google OAuth ----
-# In auth_routes.py, modify the /auth/google endpoint
 @router.get("/auth/google")
 def auth_google(current_user: User = Depends(get_current_user)):
     client_id = os.getenv("GOOGLE_CLIENT_ID")
@@ -167,19 +153,18 @@ def auth_google(current_user: User = Depends(get_current_user)):
     state_token = generate_state_token(str(current_user.id))
     logger.info(f"Using GOOGLE_REDIRECT_URI for /auth/google: {redirect_uri}")
     
+    # Updated scopes to include all required permissions
     url = generate_oauth_redirect_url("https://accounts.google.com/o/oauth2/v2/auth", {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid",
+        "scope": "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email openid",
         "access_type": "offline",
-        "prompt": "consent",  # Add this to force consent screen
+        "prompt": "consent",
         "state": state_token
     })
     logger.info(f"Generated Google OAuth URL: {url}")
     return {"redirect_url": url}
-
-# In auth/auth_routes.py - Update your google_callback function
 
 @router.get("/auth/google/callback")
 def google_callback(request: Request, db: Session = Depends(get_db)):
@@ -202,7 +187,6 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
 
     logger.info(f"Using GOOGLE_REDIRECT_URI for callback: {redirect_uri}")
 
-    # Exchange code for tokens
     res = requests.post("https://oauth2.googleapis.com/token", data={
         "code": code,
         "client_id": client_id,
@@ -218,21 +202,18 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
     token_data = res.json()
     logger.info(f"Google token response: {token_data}")
     
-    # Ensure we save all required fields
     google_tokens = {
         "access_token": token_data.get("access_token"),
-        "refresh_token": token_data.get("refresh_token"),  # This is crucial!
+        "refresh_token": token_data.get("refresh_token"),
         "token_type": token_data.get("token_type", "Bearer"),
         "scope": token_data.get("scope"),
     }
     
-    # Add expiry information if available
     if "expires_in" in token_data:
         from datetime import datetime, timedelta
         expires_at = datetime.utcnow() + timedelta(seconds=int(token_data["expires_in"]))
         google_tokens["expires_at"] = expires_at.isoformat()
     
-    # Validate that we got the refresh token
     if not google_tokens["refresh_token"]:
         logger.warning(f"No refresh token received for user {user_id}. User may need to re-authorize.")
     
@@ -241,11 +222,8 @@ def google_callback(request: Request, db: Session = Depends(get_db)):
     
     return RedirectResponse(url="https://chat.data-ai.co/connect?google=success")
 
-# Add this to auth/auth_routes.py
-
 @router.get("/auth/google/force-reauth")
 def force_google_reauth(current_user: User = Depends(get_current_user)):
-    """Force user to re-authenticate with Google to get fresh refresh token"""
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
     
@@ -254,14 +232,13 @@ def force_google_reauth(current_user: User = Depends(get_current_user)):
     
     state_token = generate_state_token(str(current_user.id))
     
-    # Force consent to ensure we get a refresh token
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email openid",
-        "access_type": "offline",  # This ensures we get refresh token
-        "prompt": "consent",       # Force consent screen to get refresh token
+        "scope": "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email openid",
+        "access_type": "offline",
+        "prompt": "consent",
         "state": state_token
     }
     
@@ -269,12 +246,11 @@ def force_google_reauth(current_user: User = Depends(get_current_user)):
     url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
     
     return {
-        "redirect_url": url, 
+        "redirect_url": url,
         "message": "Please re-authorize to get fresh tokens with refresh capability",
         "instructions": "Visit this URL in your browser to re-connect Google with refresh token"
     }
 
-# ---- Zoom OAuth ----
 @router.get("/auth/zoom")
 def auth_zoom(current_user: User = Depends(get_current_user)):
     client_id = os.getenv("ZOOM_CLIENT_ID")
@@ -330,7 +306,6 @@ def zoom_callback(request: Request, db: Session = Depends(get_db)):
     save_tokens(user_id, {"zoom": res.json()})
     return RedirectResponse(url="https://chat.data-ai.co/connect?zoom=success")
 
-# ---- Slack OAuth ----
 @router.get("/auth/slack")
 def auth_slack(current_user: User = Depends(get_current_user)):
     client_id = os.getenv("SLACK_CLIENT_ID")
@@ -378,7 +353,6 @@ def slack_callback(request: Request, db: Session = Depends(get_db)):
     save_tokens(user_id, {"slack": res.json()})
     return RedirectResponse(url="https://chat.data-ai.co/connect?slack=success")
 
-# ---- Notion OAuth ----
 @router.get("/auth/notion")
 def auth_notion(current_user: User = Depends(get_current_user)):
     client_id = os.getenv("NOTION_CLIENT_ID")
@@ -433,16 +407,12 @@ def notion_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Notion token exchange failed")
 
     token_data = res.json()
-    
-    # Store the complete token response
     save_tokens(user_id, {"notion": token_data})
-    
     logger.info(f"Successfully stored Notion tokens for user {user_id}")
     logger.info(f"User has access to workspace: {token_data.get('workspace_name', 'Unknown')}")
     
     return RedirectResponse(url="https://chat.data-ai.co/connect?notion=success")
 
-# ---- Token Viewer ----
 @router.get("/auth/tokens")
 def view_tokens(current_user: User = Depends(get_current_user)):
     token_data = load_tokens(str(current_user.id))
