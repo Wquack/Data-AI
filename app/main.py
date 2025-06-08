@@ -379,7 +379,7 @@ try:
     # Add new middleware (safe additions)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(BasicRateLimitMiddleware)
+    # app.add_middleware(BasicRateLimitMiddleware)
     
     print("✅ Enhanced middleware loaded successfully")
 except ImportError:
