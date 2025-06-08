@@ -373,7 +373,7 @@ try:
     from middleware.compatible_middleware import (
         SecurityHeadersMiddleware,
         RequestLoggingMiddleware,
-        BasicRateLimitMiddleware
+        # BasicRateLimitMiddleware
     )
     
     # Add new middleware (safe additions)

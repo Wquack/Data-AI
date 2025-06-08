@@ -571,7 +571,7 @@ def generate_contextual_response_enhanced(
                         "suggestions": [{"action": "List Notion pages", "service": "notion", "description": "View your workspace 📝", "priority": 5}],
                         "follow_up_questions": ["Which page would you like to work on? 📄"],
                         "intent": "notion_request",
-                        "confidence": 0.9
+                        "confidence": 0.9   
                     }
                 else:
                     original_response = "To access your Notion workspace, please connect Notion first."
